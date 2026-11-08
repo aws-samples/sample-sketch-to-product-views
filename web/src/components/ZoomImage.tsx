@@ -1,4 +1,5 @@
 import type { ReactEventHandler } from 'react';
+import { safeImageUrl } from '../lib/image-url';
 
 /**
  * A thumbnail that opens full size when clicked. Opened by a window event rather than context,
@@ -9,7 +10,9 @@ export const ZOOM_EVENT = 'product-views:zoom';
 export type ZoomDetail = { src: string; alt: string };
 
 export function openZoom(detail: ZoomDetail) {
-  window.dispatchEvent(new CustomEvent<ZoomDetail>(ZOOM_EVENT, { detail }));
+  const src = safeImageUrl(detail.src);
+  if (!src) return;
+  window.dispatchEvent(new CustomEvent<ZoomDetail>(ZOOM_EVENT, { detail: { ...detail, src } }));
 }
 
 export function ZoomImage({

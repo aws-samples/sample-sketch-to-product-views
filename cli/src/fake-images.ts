@@ -27,8 +27,10 @@ export async function startFakeImages(): Promise<string> {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ created: Date.now(), data: [{ b64_json: png.toString('base64') }] }));
     } catch (error) {
+      // The detail goes to the local console, not into the response.
+      console.error('[fake-images]', error);
       res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: String(error) } }));
+      res.end(JSON.stringify({ error: { message: 'invalid image request' } }));
     }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

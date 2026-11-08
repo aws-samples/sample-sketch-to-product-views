@@ -29,7 +29,8 @@ export function openaiConfigFromEnv(
     throw new Error(`${entry.id} is a ${entry.provider} model, not an OpenAI one`);
   }
   const override = env.OPENAI_BASE_URL?.trim();
-  const baseUrl = (override || `https://${entry.region}`).replace(/\/+$/, '');
+  let baseUrl = override || `https://${entry.region}`;
+  while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
 
   const headers: Record<string, string> = {};
   const organization = env.OPENAI_ORGANIZATION?.trim();
