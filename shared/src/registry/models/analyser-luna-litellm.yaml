@@ -1,0 +1,35 @@
+id: analyser-luna-litellm
+name: GPT-5.6 Luna (LiteLLM)
+category: analyser
+provider: litellm
+# The gateway's alias for Luna. NOT CONFIRMED: set from the gateway's model list, which
+# `npm run models:check` and `npm run smoke:analyse` both read, from a network that reaches the gateway.
+bedrockModelId: gpt-5.6-luna
+region: litellm.example.internal
+# Only the gateway hop is known. Where its provider then processes the images and the
+# metadata is not documented in this repo and has to be confirmed with the gateway owners.
+residency: [litellm.example.internal]
+lifecycle: active
+isDefault: false
+description: >-
+  The analyser: reads every uploaded image and the product metadata together and returns the
+  structured analysis (views, target object, details, and the product fields with their
+  source) that the specification and the prompt are built from. An example of a LiteLLM
+  gateway route; select it with `analyser_model` in Terraform.
+tags: [openai, litellm, multimodal, analyser]
+
+requiredInputs: [images]
+acceptsInputs: [images, product_metadata]
+
+# A JSON chat completion, not a form: there is no provider field mapping to do.
+apiFieldMap: {}
+
+# Deliberately empty: Luna rejects `temperature` on Bedrock and the token-limit field's name
+# varies. Add either only once `smoke:analyse` shows the gateway accepts it for this alias.
+params: []
+
+notes: >-
+  Structured output via `response_format: json_schema` (strict) on /v1/chat/completions.
+  Images travel as base64 data URLs. Reached with the same LiteLLM virtual key as the image
+  model (LITELLM_API_KEY locally, LITELLM_API_KEY_SECRET_ARN in a Lambda); the gateway may sit
+  on a private network.

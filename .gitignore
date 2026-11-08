@@ -1,0 +1,29 @@
+.DS_Store
+node_modules
+dist
+*.tsbuildinfo
+shared/src/registry/generated
+
+# Run outputs (CLI)
+runs/
+
+# Local secrets and per-account configuration
+.env
+.env.local
+infra/envs/*/local/
+infra/envs/*/*.tfvars
+!infra/envs/*/*.example.tfvars
+infra/envs/*/backend/*.s3.tfbackend
+!infra/envs/*/backend/example.s3.tfbackend
+
+# Terraform
+.terraform
+.terraform.lock.hcl
+*.tfstate*
+*.tfplan
+infra/modules/*/build
+infra/**/*.zip
+
+
+# ASH config and scan output: internal security artefacts, never committed
+.ash/

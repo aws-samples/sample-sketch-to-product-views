@@ -1,0 +1,88 @@
+id: gpt-image-flare
+name: GPT Image 2.5 Flare (LiteLLM)
+category: image-control
+provider: litellm
+# The gateway's alias, as its model list shows it (openai/gpt-image-2.5-flare).
+bedrockModelId: gpt-image-2.5-flare
+region: litellm.example.internal
+# Only the gateway hop is known. Where OpenAI then processes the sketch is not documented
+# anywhere in this repo and has to be confirmed with the gateway owners.
+residency: [litellm.example.internal]
+lifecycle: active
+isDefault: false
+description: >-
+  OpenAI's image model behind a LiteLLM gateway. The sketch, the material sample and the front
+  render are sent as the reference images of an edit and the prompt describes one view of the
+  finished product. An example of a LiteLLM gateway route; Bedrock has no multi-reference image model.
+tags: [openai, litellm, sketch, image-control]
+
+requiredInputs: [prompt, sketch]
+acceptsInputs: [prompt, sketch, swatch]
+
+# Canonical name -> multipart field of /v1/images/edits.
+apiFieldMap:
+  prompt: prompt
+  sketch: image
+  size: size
+  quality: quality
+  output_format: output_format
+
+params:
+  - key: size
+    type: select
+    label: Size
+    default: 2336x3504
+    description: >-
+      Every view is a 2:3 portrait. 2336x3504 is the largest 2:3 size OpenAI accepts (sides
+      multiples of 16, aspect between 1:3 and 3:1, 655,360 to 8,294,400 pixels; above 2560x1440
+      is marked experimental). 1536x2304 is the fallback. Terraform's `image_size` overrides it.
+    options:
+      - { value: 2336x3504, label: Portrait 2336x3504 }
+      - { value: 1536x2304, label: Portrait 1536x2304 }
+      - { value: 1024x1536, label: Portrait 1024x1536 }
+      - { value: 1024x1024, label: Square 1024x1024 }
+      - { value: 1536x1024, label: Landscape 1536x1024 }
+  - key: quality
+    type: select
+    label: Quality
+    default: max
+    description: >-
+      Cost and latency grow with quality. xhigh and max are new to the 2.5 models; at max a
+      2336x3504 view takes about 90 s and its price is not published. high is the fallback.
+      Terraform's `image_quality` overrides it.
+    options:
+      - { value: low, label: Low }
+      - { value: medium, label: Medium }
+      - { value: high, label: High }
+      - { value: xhigh, label: Extra high }
+      - { value: max, label: Max }
+  - key: output_format
+    type: select
+    label: Output format
+    default: png
+    advanced: true
+    options:
+      - { value: png, label: PNG }
+      - { value: jpeg, label: JPEG }
+      - { value: webp, label: WebP }
+
+# No costPerCall: OpenAI prices GPT Image 2.5 by token ($8 per million image input tokens, $30 per
+# million image output tokens) and publishes no per-image figure for `max`. The gateway's own
+# spend report is the truth; a number here would be shown as a fact.
+
+promptGuide: >-
+  formula: one studio photograph per view, four views; the front from the sketch and the
+  material sample, the back and the two profiles from the front render (the sketch again only when it
+  draws that view); product type in the designer's words, material and colour named explicitly,
+  which source decides what, how real materials render, the camera position stated per view, the
+  two profiles told they are mirror opposites, studio background | rules: say that the reference
+  image is a design sketch or a photograph to turn into a photographed product; no negative
+  prompt field exists, so state what to avoid in positive terms.
+
+notes: >-
+  Reached with a LiteLLM virtual key (LITELLM_API_KEY locally, LITELLM_API_KEY_SECRET_ARN
+  in a Lambda). The pipeline sends up to three reference images (sketch, material sample, front render)
+  as repeated `image` parts, the form the gateway takes. `input_fidelity` is not sent: OpenAI's
+  reference says to omit it for the 2.x image models. A view at the default size and quality
+  takes about 90 s, which is why generation runs in the durable function, never behind the
+  API's 30 s limit.

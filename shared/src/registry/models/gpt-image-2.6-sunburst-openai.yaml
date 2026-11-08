@@ -1,0 +1,107 @@
+id: gpt-image-2.6-sunburst-openai
+name: GPT Image 2.6 Sunburst (OpenAI direct)
+category: image-control
+provider: openai
+# No dated snapshot is published; the model page lists only this id
+# (https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst).
+bedrockModelId: gpt-image-2.6-sunburst
+# `api.openai.com` may process the sketch in any OpenAI region. EU processing means
+# `eu.api.openai.com`, which only serves an EU project with OpenAI-approved zero data retention or
+# modified abuse monitoring, images needing the enhanced approval
+# (https://developers.openai.com/api/docs/guides/your-data).
+region: api.openai.com
+residency: [api.openai.com]
+lifecycle: active
+isDefault: true
+description: >-
+  GPT Image 2.6 Sunburst, for detailed visual work in OpenAI's words, on OpenAI's API with a project API key. The
+  sketch, the material sample and the front render are sent as the reference images of an edit and the
+  prompt describes one view of the finished product. Selected per deployment with `image_model`
+  in Terraform.
+tags: [openai, openai-direct, sketch, image-control]
+
+requiredInputs: [prompt, sketch]
+acceptsInputs: [prompt, sketch, swatch]
+
+# Canonical name -> multipart field of /v1/images/edits.
+apiFieldMap:
+  prompt: prompt
+  sketch: image
+  size: size
+  quality: quality
+  complexity: complexity
+  output_format: output_format
+
+params:
+  - key: size
+    type: select
+    label: Size
+    default: 2336x3504
+    description: >-
+      Every view is a 2:3 portrait. 2336x3504 is the largest 2:3 size OpenAI accepts (sides
+      multiples of 16, aspect between 1:3 and 3:1, 655,360 to 8,294,400 pixels; above 2560x1440
+      is marked experimental). 1536x2304 is the fallback. Terraform's `image_size` overrides it.
+    options:
+      - { value: 2336x3504, label: Portrait 2336x3504 }
+      - { value: 1536x2304, label: Portrait 1536x2304 }
+      - { value: 1024x1536, label: Portrait 1024x1536 }
+      - { value: 1024x1024, label: Square 1024x1024 }
+      - { value: 1536x1024, label: Landscape 1536x1024 }
+  - key: quality
+    type: select
+    label: Quality
+    default: max
+    description: >-
+      Cost and latency grow with quality. xhigh and max are documented for the 2.5 and 2.6
+      models; on 2.5 Sunburst a 2336x3504 view at max took 70 to 90 s. The price per image is not
+      published. high is the fallback.
+      Terraform's `image_quality` overrides it.
+    options:
+      - { value: low, label: Low }
+      - { value: medium, label: Medium }
+      - { value: high, label: High }
+      - { value: xhigh, label: Extra high }
+      - { value: max, label: Max }
+  - key: complexity
+    type: select
+    label: Complexity
+    default: high
+    advanced: true
+    description: >-
+      New in 2.6, separate from quality and free. Omitted, the API uses high; lower values suit
+      narrow edits, and the guide warns that higher values can add latency and unwanted changes.
+      Sent explicitly so the request states what it asks for.
+    options:
+      - { value: low, label: Low }
+      - { value: medium, label: Medium }
+      - { value: high, label: High }
+  - key: output_format
+    type: select
+    label: Output format
+    default: png
+    advanced: true
+    options:
+      - { value: png, label: PNG }
+      - { value: jpeg, label: JPEG }
+      - { value: webp, label: WebP }
+
+# No costPerCall: OpenAI prices GPT Image 2.6 by token ($8 per million image input tokens, $30 per
+# million image output tokens) and publishes no per-image figure for `max`. OpenAI's usage
+# dashboard is the truth; a number here would be shown as a fact.
+
+promptGuide: >-
+  formula: one studio photograph per view, four views; the front from the sketch and the
+  material sample, the back and the two profiles from the front render (the sketch again only when it
+  draws that view); product type in the designer's words, material and colour named explicitly,
+  which source decides what, how real materials render, the camera position stated per view, the
+  two profiles told they are mirror opposites, studio background | rules: say that the reference
+  image is a design sketch or a photograph to turn into a photographed product; no negative
+  prompt field exists, so state what to avoid in positive terms.
+
+notes: >-
+  Reached with an OpenAI project key (OPENAI_API_KEY locally, OPENAI_API_KEY_SECRET_ARN in a
+  Lambda; OPENAI_ORGANIZATION and OPENAI_PROJECT optional). OpenAI keeps abuse-monitoring logs
+  for up to 30 days by default. OpenAI does not state a reference-image limit for 2.6; the
+  pipeline sends up to three (sketch, material sample, front render). `input_fidelity` is not sent: the
+  guide documents it only for earlier models. A view can take over a minute,
+  which is why generation runs in the durable function, never behind the API's 30 s limit.

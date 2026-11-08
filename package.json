@@ -1,0 +1,32 @@
+{
+  "name": "sample-sketch-to-product-views",
+  "version": "0.1.0",
+  "license": "MIT-0",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "shared",
+    "pipeline",
+    "api",
+    "cli",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w @sketch-to-product-views/contracts && npm run build -w @sketch-to-product-views/shared",
+    "2d": "npm run build && npm run start -w @sketch-to-product-views/cli --",
+    "typecheck": "npm run build && npm run typecheck -w @sketch-to-product-views/pipeline -w @sketch-to-product-views/api -w @sketch-to-product-views/cli -w @sketch-to-product-views/web",
+    "test": "npm run build && npm test -w @sketch-to-product-views/contracts -w @sketch-to-product-views/shared -w @sketch-to-product-views/pipeline -w @sketch-to-product-views/api -w @sketch-to-product-views/web",
+    "models:check": "npm run models:check -w @sketch-to-product-views/shared",
+    "bundle:pipeline": "npm run build && npm run bundle -w @sketch-to-product-views/pipeline",
+    "bundle:api": "npm run build && npm run bundle -w @sketch-to-product-views/api",
+    "web:dev": "npm run build -w @sketch-to-product-views/contracts && npm run dev -w @sketch-to-product-views/web",
+    "web:build": "npm run build -w @sketch-to-product-views/contracts && npm run build -w @sketch-to-product-views/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}

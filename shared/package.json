@@ -1,0 +1,80 @@
+{
+  "name": "@sketch-to-product-views/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./store": {
+      "types": "./dist/store/index.d.ts",
+      "default": "./dist/store/index.js"
+    },
+    "./registry": {
+      "types": "./dist/registry/index.d.ts",
+      "default": "./dist/registry/index.js"
+    },
+    "./generate": {
+      "types": "./dist/generate/index.d.ts",
+      "default": "./dist/generate/index.js"
+    },
+    "./qc/critic": {
+      "types": "./dist/qc/critic.d.ts",
+      "default": "./dist/qc/critic.js"
+    },
+    "./analyse": {
+      "types": "./dist/analyse/sketch-analyser.d.ts",
+      "default": "./dist/analyse/sketch-analyser.js"
+    },
+    "./analyse/triage": {
+      "types": "./dist/analyse/feedback-triage.d.ts",
+      "default": "./dist/analyse/feedback-triage.js"
+    },
+    "./qc/judge": {
+      "types": "./dist/qc/judge/index.d.ts",
+      "default": "./dist/qc/judge/index.js"
+    },
+    "./guardrail": {
+      "types": "./dist/guardrail/index.d.ts",
+      "default": "./dist/guardrail/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./image": {
+      "types": "./dist/image/input.d.ts",
+      "default": "./dist/image/input.js"
+    }
+  },
+  "scripts": {
+    "registry": "tsx src/registry/codegen.ts",
+    "build": "npm run registry && tsc -p tsconfig.json",
+    "typecheck": "npm run registry && tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json",
+    "test": "env -u AWS_PROFILE -u GUARDRAIL_ID -u GUARDRAIL_VERSION -u AWS_SESSION_TOKEN -u OPENAI_API_KEY AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 node --test --import tsx test/*.test.ts",
+    "models:check": "tsx src/registry/audit.ts",
+    "critic:measure": "tsx scripts/critic-measure.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.717.0",
+    "@aws-sdk/client-dynamodb": "^3.717.0",
+    "@aws-sdk/client-s3": "^3.717.0",
+    "@aws-sdk/client-secrets-manager": "3.1135.0",
+    "@aws-sdk/lib-dynamodb": "^3.717.0",
+    "@aws-sdk/s3-request-presigner": "^3.717.0",
+    "@sketch-to-product-views/contracts": "*",
+    "sharp": "^0.35.5",
+    "yaml": "^2.6.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock": "^3.1135.0",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

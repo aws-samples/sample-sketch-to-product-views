@@ -1,0 +1,22 @@
+{
+  "name": "@sketch-to-product-views/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=../.env.local src/run.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws/durable-execution-sdk-js": "^2.4.0",
+    "@sketch-to-product-views/contracts": "*",
+    "@sketch-to-product-views/pipeline": "*",
+    "@sketch-to-product-views/shared": "*",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

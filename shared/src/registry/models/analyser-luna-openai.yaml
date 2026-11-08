@@ -1,0 +1,37 @@
+id: analyser-luna-openai
+name: GPT-5.6 Luna (OpenAI direct)
+category: analyser
+provider: openai
+# OpenAI's model id; Chat Completions, structured outputs and image input are supported
+# (https://developers.openai.com/api/docs/models/gpt-5.6-luna). Not `gpt-6-luna`.
+bedrockModelId: gpt-5.6-luna
+# `api.openai.com` may process the images and the metadata in any OpenAI region. EU processing
+# means `eu.api.openai.com`, which only serves an EU project with OpenAI-approved zero data
+# retention or modified abuse monitoring (https://developers.openai.com/api/docs/guides/your-data).
+region: api.openai.com
+residency: [api.openai.com]
+lifecycle: active
+isDefault: false
+description: >-
+  The analyser on OpenAI's API directly: the same prompt, schema and checks as the other analysers, through Chat Completions
+  with a strict json_schema response format. Selected per deployment with `analyser_model` in
+  Terraform.
+tags: [openai, openai-direct, multimodal, analyser]
+
+requiredInputs: [images]
+acceptsInputs: [images, product_metadata]
+
+# A JSON chat completion, not a form: there is no provider field mapping to do.
+apiFieldMap: {}
+
+# Deliberately empty: OpenAI's defaults apply. Its token-limit field is `max_completion_tokens`,
+# and `temperature` has to go whenever reasoning effort is not `none`
+# (https://developers.openai.com/api/docs/guides/latest-model); declare either only once
+# `smoke:analyse` has shown what the model accepts.
+params: []
+
+notes: >-
+  Structured output via `response_format: json_schema` (strict) on /v1/chat/completions. Images
+  travel as base64 data URLs. Reached with an OpenAI project key (OPENAI_API_KEY locally,
+  OPENAI_API_KEY_SECRET_ARN in a Lambda; OPENAI_ORGANIZATION and OPENAI_PROJECT optional).
+  OpenAI keeps abuse-monitoring logs for up to 30 days by default.

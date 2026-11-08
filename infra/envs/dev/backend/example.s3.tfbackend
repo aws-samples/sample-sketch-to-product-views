@@ -1,0 +1,4 @@
+# Copy to backend/<config>.s3.tfbackend. The bucket (and the KMS key, if the state uses a CMK)
+# has to exist before `terraform init`.
+bucket     = "<state-bucket-name>"
+kms_key_id = "<kms-key-alias-or-arn>"
