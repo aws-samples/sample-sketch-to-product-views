@@ -94,7 +94,7 @@ export async function generateView(
   });
 
   const id = randomUUID();
-  const key = candidateKey(input.productId, revSegment, id, result.contentType);
+  const key = candidateKey(input.submittedBy, input.productId, revSegment, id, result.contentType);
   await putArtifact(key, result.image, result.contentType);
   return {
     id,

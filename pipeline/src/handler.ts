@@ -60,6 +60,7 @@ import {
   revisionSegment,
   setReviewCallbackId,
   sniffImageType,
+  type RevisionRef,
 } from '@sketch-to-product-views/shared/store';
 import { parsePipelineInput, type PipelineInput } from './input.js';
 import { ValidationError, validate, type ValidateResult } from './stages/validate.js';
@@ -284,7 +285,7 @@ const imageOverridesFor = (input: PipelineInput) => ({
  */
 async function stage<T>(
   ctx: DurableContext,
-  revisionId: string,
+  rev: RevisionRef,
   id: StageId,
   opening: string,
   fn: () => Promise<{ result: T; message: string; detail?: StageDetail }>,
@@ -313,7 +314,7 @@ async function stage<T>(
       // number it reported the first time round.
       const retry = step.attempt > 1 ? ` (retry ${step.attempt - 1})` : '';
       const fields = {
-        revisionId,
+        revisionId: rev.revisionId,
         stage: id,
         step: stepName,
         stepAttempt: step.attempt,
@@ -325,7 +326,7 @@ async function stage<T>(
 
       // The opening event carries only what is known before the work runs, which is the
       // stage's input. Its output is unknowable here and is recorded on the closing event.
-      await emit(revisionId, id, 'running', {
+      await emit(rev, id, 'running', {
         message: `${opening}${retry}`,
         attempt: opts.attempt,
         view: opts.view,
@@ -333,7 +334,7 @@ async function stage<T>(
       });
       try {
         const { result, message, detail } = await fn();
-        await emit(revisionId, id, 'passed', {
+        await emit(rev, id, 'passed', {
           message,
           attempt: opts.attempt,
           view: opts.view,
@@ -359,7 +360,7 @@ async function stage<T>(
         });
         // A failure keeps the input on the record. Knowing what a stage was handed is most
         // valuable in exactly the case where it could not finish.
-        await emit(revisionId, id, 'failed', {
+        await emit(rev, id, 'failed', {
           message: `${reason}${retry}`,
           attempt: opts.attempt,
           view: opts.view,
@@ -397,6 +398,7 @@ export const handler = withDurableExecution(runDurable);
 async function runExecution(event: unknown, ctx: DurableContext) {
   const input = parsePipelineInput(event);
   const { revisionId } = input;
+  const rev = refOf(input);
 
   try {
     await runRevision(ctx, input);
@@ -408,7 +410,7 @@ async function runExecution(event: unknown, ctx: DurableContext) {
     // the revision itself so the UI can state why the run stopped.
     await ctx.step('mark-failed', async (step) => {
       step.logger.error({ event: 'run_failed', revisionId, reason, error: describeError(error) });
-      await patchRevision(revisionId, { status: 'failed', failureReason: reason });
+      await patchRevision(rev, { status: 'failed', failureReason: reason });
     });
 
     return { revisionId, status: 'failed', reason };
@@ -427,15 +429,23 @@ function revisionSegmentOf(input: PipelineInput): string {
 }
 
 /**
+ * The revision's address in the store: its id and its owner, who is part of every key. The
+ * owner is the `submittedBy` the API took from the verified claims, carried in the payload.
+ */
+function refOf(input: PipelineInput): RevisionRef {
+  return { owner: input.submittedBy, revisionId: input.revisionId };
+}
+
+/**
  * Validate the stored package, analyse the images and the product metadata,
  * and build the specification from the analysis. Exported so the rail can be tested without
  * the 2D loop behind it.
  */
 export async function runIntake(ctx: DurableContext, input: PipelineInput): Promise<ProductSpec> {
-  const { revisionId } = input;
+  const rev = refOf(input);
 
   // Validate package
-  await stage(ctx, revisionId, 'validate', 'Reading each input from storage.', async () => {
+  await stage(ctx, rev, 'validate', 'Reading each input from storage.', async () => {
     const checked = await validate(input);
     return { result: null, message: checked.message, detail: validateDetail(input, checked) };
   });
@@ -443,12 +453,12 @@ export async function runIntake(ctx: DurableContext, input: PipelineInput): Prom
   // Analyse images. The only source of the spec, so a failure here fails the run.
   const analysed = await stage(
     ctx,
-    revisionId,
+    rev,
     'analyse',
     'Reading the images and the product details.',
     async () => {
       const result = await analyse(input, analyserModel);
-      await patchRevision(revisionId, { analysis: result.analysis });
+      await patchRevision(rev, { analysis: result.analysis });
       return {
         result: result.analysis,
         message: analysisMessage(result),
@@ -461,7 +471,7 @@ export async function runIntake(ctx: DurableContext, input: PipelineInput): Prom
   // Complete specification
   const spec = await stage(
     ctx,
-    revisionId,
+    rev,
     'complete_spec',
     'Building the specification from the analysis.',
     async () => {
@@ -470,7 +480,7 @@ export async function runIntake(ctx: DurableContext, input: PipelineInput): Prom
       const hasMaterial = planImages(input.inputs, kinds).material !== undefined;
       const completed = completeSpec(input.productId, analysed, { hasMaterial });
       const warning = warningFor(completed, { hasMaterial });
-      await patchRevision(revisionId, { spec: completed, warning });
+      await patchRevision(rev, { spec: completed, warning });
       return {
         result: completed,
         message: specMessage(completed),
@@ -483,7 +493,7 @@ export async function runIntake(ctx: DurableContext, input: PipelineInput): Prom
 }
 
 async function runRevision(ctx: DurableContext, input: PipelineInput): Promise<void> {
-  const { revisionId } = input;
+  const rev = refOf(input);
   const revSegment = revisionSegmentOf(input);
   const spec = await runIntake(ctx, input);
 
@@ -507,7 +517,7 @@ async function runRevision(ctx: DurableContext, input: PipelineInput): Promise<v
   );
 
   for (let round = 0; ; round += 1) {
-    const gate = await review(ctx, revisionId, accepted, round);
+    const gate = await review(ctx, rev, accepted, round);
     const { decision } = gate;
     if (decision.decision === 'approve') break;
     if (regenerations.length >= MAX_REGENERATIONS) {
@@ -556,7 +566,7 @@ async function triage(
   const round = earlier.length + 1;
   return stage(
     ctx,
-    input.revisionId,
+    refOf(input),
     'human_review',
     'Reading which views the reviewer asks to change.',
     async () => {
@@ -571,7 +581,7 @@ async function triage(
         attributes: result.attributes,
         ...(reviewedBy ? { reviewedBy } : {}),
       };
-      await patchRevision(input.revisionId, { regenerations: [...earlier, regeneration] });
+      await patchRevision(refOf(input), { regenerations: [...earlier, regeneration] });
       const remade = viewsToRemake(result.views.map((v) => v.view));
       return {
         result: regeneration,
@@ -596,7 +606,7 @@ async function routeGuidance(
 ): Promise<Guidance> {
   return stage(
     ctx,
-    input.revisionId,
+    refOf(input),
     'complete_spec',
     'Reading which views the design team notes concern.',
     async () => {
@@ -609,7 +619,7 @@ async function routeGuidance(
         attributes: result.attributes,
         ...(reviewedBy ? { reviewedBy } : {}),
       };
-      await patchRevision(input.revisionId, { guidance });
+      await patchRevision(refOf(input), { guidance });
       const views = result.views.map((v) => v.view);
       return {
         result: guidance,
@@ -763,7 +773,7 @@ async function makeAttempt(
     (context: DurableContext) =>
       stage(
         context,
-        input.revisionId,
+        refOf(input),
         'generate_2d',
         `${label}${view === 'front' ? ` with ${entry.name}` : ''}: the ${VIEW_LABEL[view]}, ${from}.`,
         async () => {
@@ -773,7 +783,7 @@ async function makeAttempt(
             corrections: plan.corrections(view),
             requests: plan.requests?.[view],
           });
-          if (view === 'front') await appendCandidates(input.revisionId, [candidate]);
+          if (view === 'front') await appendCandidates(refOf(input), [candidate]);
           return {
             result: candidate,
             message: producedMessage(candidate),
@@ -819,7 +829,7 @@ async function makeAttempt(
   const profiles = batch.getResults();
   const others = [...(plan.redoBack ? [back] : []), ...profiles];
   await ctx.step(`record_2d-${attempt}`, async () => {
-    await appendCandidates(input.revisionId, others);
+    await appendCandidates(refOf(input), others);
   });
   return [
     front,
@@ -855,7 +865,7 @@ export async function twoDLoop(
   const select = async (chosen: TriedAttempt, approved: boolean): Promise<Accepted> => {
     const accepted = chosen.views[0];
     await ctx.step(`select-${chosen.attempt}`, async () => {
-      await patchRevision(input.revisionId, {
+      await patchRevision(refOf(input), {
         selectedCandidateId: accepted.id,
         selectedViews: viewMap(chosen.views.map((c) => [c.view ?? 'front', c.id])),
         attempt: chosen.attempt,
@@ -867,7 +877,7 @@ export async function twoDLoop(
         },
       });
       if (!approved) {
-        await emit(input.revisionId, 'evaluate_2d', 'passed', {
+        await emit(refOf(input), 'evaluate_2d', 'passed', {
           attempt: chosen.attempt,
           message: `The critic rejected all ${tried.length} attempt(s); attempt ${chosen.attempt}, the best, goes to review.`,
         });
@@ -903,7 +913,7 @@ export async function twoDLoop(
     // attempt keeps its verdict: its image did not change.
     const verdicts = await stage(
       ctx,
-      input.revisionId,
+      refOf(input),
       'evaluate_2d',
       'Scoring each view against the sketch and the specification.',
       async () => {
@@ -918,7 +928,7 @@ export async function twoDLoop(
           ),
         );
         await updateCandidates(
-          input.revisionId,
+          refOf(input),
           new Map(
             produced
               .map((c, i) => [c, scored[i]] as const)
@@ -982,7 +992,7 @@ export async function regenerate(
   });
 
   await ctx.step(`select-${attempt}`, async () => {
-    await patchRevision(input.revisionId, {
+    await patchRevision(refOf(input), {
       selectedCandidateId: produced[0].id,
       selectedViews: viewMap(produced.map((c) => [c.view ?? 'front', c.id])),
       attempt,
@@ -1001,7 +1011,7 @@ export async function regenerate(
  */
 async function review(
   ctx: DurableContext,
-  revisionId: string,
+  rev: RevisionRef,
   accepted: Accepted,
   /** The review round, 0 before the first regeneration; part of every later step name. */
   round: number,
@@ -1020,9 +1030,9 @@ async function review(
     raw = await ctx.waitForCallback<string>(
       step('human_review'),
       async (callbackId) => {
-        await setReviewCallbackId(revisionId, callbackId);
-        await patchRevision(revisionId, { status: 'awaiting_review' });
-        await emit(revisionId, 'human_review', 'awaiting_review', {
+        await setReviewCallbackId(rev, callbackId);
+        await patchRevision(rev, { status: 'awaiting_review' });
+        await emit(rev, 'human_review', 'awaiting_review', {
           message: `Candidate ${candidate.id.slice(0, 8)} is waiting for a decision.${
             rejected.length > 0
               ? ` The critic still rejects ${rejected.map((c) => `the ${VIEW_LABEL[c.view ?? 'front']}`).join(', ')}.`
@@ -1036,7 +1046,7 @@ async function review(
     // A timeout or a failure callback: record it on the rail, then fail the run.
     const reason = `No review decision: ${errorSummary(error)}`;
     await ctx.step(step('review-failed'), async () => {
-      await emit(revisionId, 'human_review', 'failed', { message: reason });
+      await emit(rev, 'human_review', 'failed', { message: reason });
     });
     throw new StageFailed('human_review', reason, { cause: error });
   }
@@ -1047,8 +1057,8 @@ async function review(
 
   await ctx.step(step('record-review'), async () => {
     // The gate is closed: a second decision would find no callback to complete.
-    await patchRevision(revisionId, { status: 'running' });
-    await emit(revisionId, 'human_review', 'passed', {
+    await patchRevision(rev, { status: 'running' });
+    await emit(rev, 'human_review', 'passed', {
       message: `Reviewer chose to ${decision.decision}.`,
       detail: captureDetail({
         input: { candidateId: candidate.id, waitedDays: days },
@@ -1081,7 +1091,7 @@ export async function deliver(
   accepted: Accepted,
   revSegment: string,
 ): Promise<void> {
-  await stage(ctx, input.revisionId, 'deliver', 'Publishing the approved views.', async () => {
+  await stage(ctx, refOf(input), 'deliver', 'Publishing the approved views.', async () => {
     const delivered: {
       view: CandidateView;
       key: string;
@@ -1099,7 +1109,7 @@ export async function deliver(
           : `${input.productId}-approved-${view}.${ext}`;
       // `filename` is deterministic per product, so the revision segment is the only thing
       // stopping a second approved run from overwriting this product's previous delivery.
-      const key = deliveryKey(input.productId, revSegment, filename);
+      const key = deliveryKey(input.submittedBy, input.productId, revSegment, filename);
       // The type the bytes actually are, not the type the candidate was assumed to be: a JPEG
       // delivered as `image/png` downloads as a file no viewer will open.
       await putArtifact(key, bytes, sniffImageType(bytes) ?? 'image/png');
@@ -1107,7 +1117,7 @@ export async function deliver(
     }
 
     const deliveryKeys = viewMap(delivered.map((d) => [d.view, d.key]));
-    await patchRevision(input.revisionId, {
+    await patchRevision(refOf(input), {
       status: 'approved',
       deliveryKey: deliveryKeys.front,
       deliveryKeys,
@@ -1304,23 +1314,23 @@ function evaluationsDetail(
  * entries of the same attempt and view are dropped first: a retry replaces its own earlier try
  * and never another call's entries.
  */
-async function appendCandidates(revisionId: string, added: Candidate[]): Promise<void> {
-  const state = await getRevision(revisionId);
-  if (!state) throw new Error(`revision ${revisionId} disappeared`);
+async function appendCandidates(rev: RevisionRef, added: Candidate[]): Promise<void> {
+  const state = await getRevision(rev);
+  if (!state) throw new Error(`revision ${rev.revisionId} disappeared`);
   const callOf = (c: Candidate) => `${c.attempt}:${c.view ?? 'front'}`;
   const replaced = new Set(added.map(callOf));
-  await patchRevision(revisionId, {
+  await patchRevision(rev, {
     candidates: [...state.candidates.filter((c) => !replaced.has(callOf(c))), ...added],
   });
 }
 
 async function updateCandidates(
-  revisionId: string,
+  rev: RevisionRef,
   deltas: Map<string, Partial<Candidate>>,
 ): Promise<void> {
-  const state = await getRevision(revisionId);
-  if (!state) throw new Error(`revision ${revisionId} disappeared`);
-  await patchRevision(revisionId, {
+  const state = await getRevision(rev);
+  if (!state) throw new Error(`revision ${rev.revisionId} disappeared`);
+  await patchRevision(rev, {
     candidates: state.candidates.map((c) => ({ ...c, ...deltas.get(c.id) })),
   });
 }

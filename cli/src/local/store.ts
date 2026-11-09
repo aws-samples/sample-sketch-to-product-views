@@ -16,13 +16,19 @@ import { emit as emitEvent, get, patch } from './revisions.js';
  * artifacts as files. `../run.ts` points the pipeline's imports of the store here; nothing
  * reaches DynamoDB or S3.
  *
- * Keys keep their S3 shape. `inputs/` is a read-only prefix: the files the run was given.
+ * Keys keep their S3 shape, under the local owner's `user/cli/` prefix like any user's.
+ * `user/cli/inputs/` is a read-only prefix: the files the run was given.
  */
+
+/** The owner every local run belongs to; the keys it reads and writes sit under its prefix. */
+export const LOCAL_OWNER = 'cli';
+const INPUTS_PREFIX = `user/${LOCAL_OWNER}/inputs/`;
 
 export {
   candidateKey,
   deliveryKey,
   inputKey,
+  isOwnedKey,
   revisionSegment,
   safeFilename,
   sniffImageType,
@@ -34,13 +40,13 @@ export const REPO = resolve(here, '../../..');
 export const LOCAL_ARTIFACTS_DIR = resolve(
   process.env.LOCAL_ARTIFACTS_DIR ?? join(REPO, 'runs'),
 );
-/** Where `inputs/` keys resolve: the directory holding the sketch and material sample. */
+/** Where `user/cli/inputs/` keys resolve: the directory holding the sketch and material sample. */
 export const INPUTS_DIR = resolve(process.env.LOCAL_INPUTS_DIR ?? REPO);
 
 /** The file behind a key. A key never climbs out of its root. */
 export function artifactPath(key: string): string {
   if (key.split('/').includes('..')) throw new Error(`invalid key: ${key}`);
-  if (key.startsWith('inputs/')) return join(INPUTS_DIR, key.slice('inputs/'.length));
+  if (key.startsWith(INPUTS_PREFIX)) return join(INPUTS_DIR, key.slice(INPUTS_PREFIX.length));
   return join(LOCAL_ARTIFACTS_DIR, key);
 }
 
@@ -73,19 +79,22 @@ export async function headArtifact(
   }
 }
 
-export async function getRevision(revisionId: string): Promise<PipelineState | undefined> {
-  return get(revisionId);
+/** The shared store's address type, structurally: one local owner, so only the id is used. */
+type RevisionRef = { owner: string; revisionId: string };
+
+export async function getRevision(ref: RevisionRef): Promise<PipelineState | undefined> {
+  return get(ref.revisionId);
 }
 
 export async function patchRevision(
-  revisionId: string,
+  ref: RevisionRef,
   delta: Partial<Omit<PipelineState, 'revisionId' | 'stages' | 'events'>>,
 ): Promise<void> {
-  patch(revisionId, delta);
+  patch(ref.revisionId, delta);
 }
 
 export async function emit(
-  revisionId: string,
+  ref: RevisionRef,
   stage: StageId,
   status: StageStatus,
   opts: {
@@ -96,17 +105,17 @@ export async function emit(
     detail?: StageDetail;
   } = {},
 ): Promise<StageEvent> {
-  const state = emitEvent(revisionId, stage, status, opts);
+  const state = emitEvent(ref.revisionId, stage, status, opts);
   return state.events[state.events.length - 1];
 }
 
 /** Held apart from the revision, as in DynamoDB: the browser never sees it. */
 const callbacks = new Map<string, string>();
 
-export async function setReviewCallbackId(revisionId: string, callbackId: string): Promise<void> {
-  callbacks.set(revisionId, callbackId);
+export async function setReviewCallbackId(ref: RevisionRef, callbackId: string): Promise<void> {
+  callbacks.set(ref.revisionId, callbackId);
 }
 
-export async function getReviewCallbackId(revisionId: string): Promise<string | undefined> {
-  return callbacks.get(revisionId);
+export async function getReviewCallbackId(ref: RevisionRef): Promise<string | undefined> {
+  return callbacks.get(ref.revisionId);
 }

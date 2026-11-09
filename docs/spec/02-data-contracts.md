@@ -319,7 +319,7 @@ The one document the UI polls.
 | `revision` | int, always `1` (display only; nothing keys off it) | create |
 | `status` | RevisionStatus | create `running`; gate `awaiting_review`/`running`; deliver `approved`; failure `failed` |
 | `createdAt`, `updatedAt` | string | create; every write bumps `updatedAt` |
-| `owner?` | JWT `sub` of the submitter, from verified claims only | create |
+| `owner` | JWT `sub` of the submitter, from verified claims only; required, and part of every key | create |
 | `modelId` | image model registry id | create |
 | `attemptBudget` | int ≥1 | create (`settings.attemptBudget`, else `ATTEMPT_BUDGET`, default 2) |
 | `settings?` | GenerationSettings | create; only the values a run changed |
@@ -346,7 +346,7 @@ Not part of the document and never sent to a browser: the review callback id.
 |---|---|
 | `SubmitRequest` (every text field sanitised first) | `productId` 1–64 chars; `inputs` InputFile[1…5], untagged; `productMetadata?` (product details); `modelId?` ≤128; `notes?` trimmed, 1–4000; `settings?` GenerationSettings |
 | `GenerationSettings` | strict object, all optional: `size`, `quality`, `complexity` (strings 1–32, each checked against the chosen model's registry options), `attemptBudget` int 1–4 (`MAX_ATTEMPT_BUDGET`) |
-| `PipelineInput` (durable payload) | `revisionId`, `productId`, `inputs` (≥1), `productMetadata?`, `modelId` (resolved), `submittedBy?`, `createdAt` (the stored value), `requests?: { notes 1–4000 trimmed; reviewedBy? }`, `settings?` GenerationSettings |
+| `PipelineInput` (durable payload) | `revisionId`, `productId`, `inputs` (≥1), `productMetadata?`, `modelId` (resolved), `submittedBy` (the owner's `sub`, required), `createdAt` (the stored value), `requests?: { notes 1–4000 trimmed; reviewedBy? }`, `settings?` GenerationSettings |
 | `PresignRequest` | `productId` 1–64; `filename` 1–255; `contentType` 1–128; `sizeBytes` int > 0; `role?` InputRole, accepted and ignored |
 | `PresignResponse` | `uploadUrl`, `key`, `cdnUrl` (a presigned GET), `contentType` |
 | Callback result | `ReviewDecision` plus `reviewedBy` (verified display name) and `reviewedAt` |
@@ -355,9 +355,13 @@ Not part of the document and never sent to a browser: the review callback id.
 
 | Object | Key |
 |---|---|
-| Upload | `product/{productId}/uploads/{uuid}/{safeFilename}` |
-| Candidate | `product/{productId}/{revSegment}/candidates/{candidateId}.{png\|jpg\|webp}` (extension from the image's sniffed type) |
-| Delivery | `product/{productId}/{revSegment}/delivery/{productId}-approved.{ext}` (front), `…/{productId}-approved-{view}.{ext}` (others) |
+| Upload | `user/{owner}/product/{productId}/uploads/{uuid}/{safeFilename}` |
+| Candidate | `user/{owner}/product/{productId}/{revSegment}/candidates/{candidateId}.{png\|jpg\|webp}` (extension from the image's sniffed type) |
+| Delivery | `user/{owner}/product/{productId}/{revSegment}/delivery/{productId}-approved.{ext}` (front), `…/{productId}-approved-{view}.{ext}` (others) |
+
+- `{owner}` = the submitter's Cognito `sub`. It must match `^[A-Za-z0-9_.:=+@-]{1,128}$` (the
+  session-tag value characters, less space and `/`); any other value throws rather than build a
+  key. Every key a user can reach is under their own `user/{owner}/` prefix.
 
 - `revSegment` = `{stamp}-{revisionId}`; `stamp` = the stored `createdAt` as
   `YYYYMMDDTHHMMSSZ` (dashes and colons removed, milliseconds dropped), or `undated` when
@@ -372,8 +376,11 @@ Not part of the document and never sent to a browser: the review callback id.
 
 | pk | sk | Item |
 |---|---|---|
-| `REV#{revisionId}` | `META` | the revision minus `events`, plus `seq` (event counter) and `reviewCallbackId` |
-| `REV#{revisionId}` | `EVENT#{seq zero-padded to 6}` | `{ event: StageEvent }` |
+| `USER#{owner}#REV#{revisionId}` | `META` | the revision minus `events`, plus `seq` (event counter) and `reviewCallbackId` |
+| `USER#{owner}#REV#{revisionId}` | `EVENT#{seq zero-padded to 6}` | `{ event: StageEvent }` |
+
+Every store call takes a `RevisionRef` `{ owner, revisionId }`: a revision cannot be addressed by
+its id alone, so a caller who builds the key from their own `sub` finds nothing of anyone else's.
 
 Reading a revision is one strongly consistent query on the partition, following continuation
 keys. Writes: create is conditional on the item not existing; patch is a shallow `SET` of the

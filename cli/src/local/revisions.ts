@@ -11,7 +11,7 @@ import {
 
 /**
  * In-memory revision store for the local runner. The deployed pipeline uses
- * DynamoDB (`PK=REV#{id}`, `SK=META | EV#{seq}`) behind the same two calls: `patch()` and
+ * DynamoDB (`PK=USER#{owner}#REV#{id}`, `SK=META | EVENT#{seq}`) behind the same two calls: `patch()` and
  * `emit()`.
  */
 

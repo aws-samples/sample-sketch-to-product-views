@@ -414,12 +414,10 @@ export const pipelineStateSchema = z.object({
   /**
    * Subject (`sub`) of the verified JWT that submitted this revision. Written once, at
    * creation, from the claims and never from a request body — it is the only thing the
-   * per-revision authorization check has to go on.
-   *
-   * Optional because revisions written before this field existed have no owner; see
-   * `mayReadRevision` in `./authz.ts` for how those are treated.
+   * per-revision authorization check has to go on. It also prefixes every key the revision
+   * lives under, so a revision cannot exist without one.
    */
-  owner: z.string().optional(),
+  owner: z.string().min(1),
   /** Image model used for 2D generation, resolved from the registry at submit time. */
   modelId: z.string(),
   attemptBudget: z.number().int().positive(),
@@ -495,7 +493,8 @@ export const pipelineInputSchema = z.object({
   productMetadata: productMetadataSchema.optional(),
   /** Registry id, already resolved and validated by the API. */
   modelId: z.string().min(1),
-  submittedBy: z.string().optional(),
+  /** The owner's `sub`: the pipeline builds every revision and artifact key from it. */
+  submittedBy: z.string().min(1),
   /** The revision's stored `createdAt`, from which the artifact key prefix is derived. */
   createdAt: z.string().min(1),
   /** The design team's notes, which guide the first generation. */

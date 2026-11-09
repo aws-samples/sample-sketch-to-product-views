@@ -56,9 +56,9 @@ let keys = 0;
 mock.module('@sketch-to-product-views/shared/store', {
   namedExports: {
     ...store.exports,
-    candidateKey: (_p: string, rev: string, id: string) =>
+    candidateKey: (_o: string, _p: string, rev: string, id: string) =>
       `product/x/${rev}/candidates/${id}-${(keys += 1)}.png`,
-    deliveryKey: (_p: string, rev: string, filename: string) =>
+    deliveryKey: (_o: string, _p: string, rev: string, filename: string) =>
       `product/x/${rev}/delivery/${filename}`,
   },
 });
@@ -168,14 +168,15 @@ const input: PipelineInput = {
   revisionId: 'r-1',
   productId: 'MODEL-1',
   modelId: 'gpt-image-flare',
+  submittedBy: 'u-1',
   createdAt: '2026-10-12T10:00:00.000Z',
-  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'k/sketch.png' }],
+  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'user/u-1/k/sketch.png' }],
   productMetadata: { format: 'text', text: 'oak, ecru' },
   requests: { notes: 'A darker wood' },
 };
 
 function reset() {
-  store.objects.set('k/sketch.png', IMAGE);
+  store.objects.set('user/u-1/k/sketch.png', IMAGE);
   store.revision = { candidates: [] };
   store.events.length = 0;
   screened.length = 0;

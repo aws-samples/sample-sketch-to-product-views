@@ -103,9 +103,9 @@ for (const f of product.files) {
   if (!existsSync(f)) throw new Error(`missing input ${f}`);
 }
 
-// Every input is read through an `inputs/` key, relative to the filesystem root.
+// Every input is read through a `user/cli/inputs/` key, relative to the filesystem root.
 process.env.LOCAL_INPUTS_DIR = '/';
-const inputKey = (path: string) => `inputs/${relative('/', path)}`;
+const inputKey = (path: string) => `user/cli/inputs/${relative('/', path)}`;
 
 // One folder per run: its images, state.json and report.html. Set before the store is loaded.
 const now = new Date().toISOString();
@@ -158,7 +158,7 @@ put({
   status: 'running',
   createdAt: now,
   updatedAt: now,
-  owner: 'cli',
+  owner: store.LOCAL_OWNER,
   modelId: process.env.IMAGE_MODEL,
   attemptBudget: Number(process.env.ATTEMPT_BUDGET ?? 2),
   attempt: 0,
@@ -189,6 +189,7 @@ const run = runDurable(
     inputs,
     ...(productMetadata ? { productMetadata } : {}),
     modelId: process.env.IMAGE_MODEL,
+    submittedBy: store.LOCAL_OWNER,
     createdAt: now,
     ...(notes ? { requests: { notes } } : {}),
   },
@@ -202,7 +203,7 @@ const ask = createInterface({ input: process.stdin, output: process.stdout });
 while (!finished) {
   await new Promise((r) => setTimeout(r, 1000));
   const state = snapshot();
-  const callbackId = await store.getReviewCallbackId(revisionId);
+  const callbackId = await store.getReviewCallbackId({ owner: store.LOCAL_OWNER, revisionId });
   if (state.status !== 'awaiting_review' || !callbackId) continue;
 
   let decision: { decision: 'approve' | 'regenerate'; notes?: string } = { decision: 'approve' };
@@ -212,7 +213,7 @@ while (!finished) {
     const change = contracts.sanitizeText(typed, { multiline: true });
     if (change) decision = { decision: 'regenerate', notes: change };
   }
-  await store.setReviewCallbackId(revisionId, '');
+  await store.setReviewCallbackId({ owner: store.LOCAL_OWNER, revisionId }, '');
   local.complete(
     callbackId,
     JSON.stringify({ ...decision, reviewedBy: 'cli', reviewedAt: new Date().toISOString() }),

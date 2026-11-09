@@ -1,5 +1,6 @@
 import { INPUT_IMAGE_MAX_BYTES } from '../image/limits.js';
 import { randomUUID } from 'node:crypto';
+import { assertOwnerId } from './owner.js';
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
@@ -19,9 +20,13 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
  * `cdnUrl`, not a key.
  *
  * Layout:
- *   product/{productId}/uploads/{uuid}/{filename}         uploaded sketches and swatches
- *   product/{productId}/{revSegment}/candidates/{id}.{ext}   generated 2D images
- *   product/{productId}/{revSegment}/delivery/{filename}     delivered approved assets
+ *   user/{owner}/product/{productId}/uploads/{uuid}/{filename}            uploaded sketches and swatches
+ *   user/{owner}/product/{productId}/{revSegment}/candidates/{id}.{ext}   generated 2D images
+ *   user/{owner}/product/{productId}/{revSegment}/delivery/{filename}     delivered approved assets
+ *
+ * `{owner}` is the submitter's Cognito `sub`. Every key a user can reach sits under their own
+ * `user/{owner}/` prefix, which is what the API's per-user role is limited to in IAM
+ * (`arn:…:{bucket}/user/${aws:PrincipalTag/sub}/*`, infra/modules/api).
  *
  * `revSegment` is `{compacted createdAt}-{revisionId}` — see `revisionSegment`. It replaced a
  * hardcoded `rev1`, which made every revision of a product share one prefix and let a second
@@ -105,18 +110,29 @@ export function revisionSegment(createdAt: string, revisionId: string): string {
  * An upload key. Minted before any revision exists, so it is deliberately *not* under a
  * revision segment; the `{uuid}` is what keeps two uploads of the same filename apart.
  */
-export function inputKey(productId: string, filename: string): string {
-  return `product/${productId}/uploads/${randomUUID()}/${safeFilename(filename)}`;
+export function inputKey(owner: string, productId: string, filename: string): string {
+  return `${ownerKeyPrefix(owner)}product/${productId}/uploads/${randomUUID()}/${safeFilename(filename)}`;
+}
+
+/** `user/{owner}/`: the only prefix a user's keys live under. */
+export function ownerKeyPrefix(owner: string): string {
+  return `user/${assertOwnerId(owner)}/`;
+}
+
+/** True when `key` sits under the owner's own prefix. */
+export function isOwnedKey(owner: string, key: string): boolean {
+  return key.startsWith(ownerKeyPrefix(owner)) && !key.split('/').includes('..');
 }
 
 export function candidateKey(
+  owner: string,
   productId: string,
   revSegment: string,
   candidateId: string,
   contentType: string,
 ): string {
   const ext = contentType === 'image/jpeg' ? 'jpg' : contentType === 'image/webp' ? 'webp' : 'png';
-  return `product/${productId}/${revSegment}/candidates/${candidateId}.${ext}`;
+  return `${ownerKeyPrefix(owner)}product/${productId}/${revSegment}/candidates/${candidateId}.${ext}`;
 }
 
 /**
@@ -125,8 +141,13 @@ export function candidateKey(
  * same product overwrites the first run's delivered bytes while the older revision's stored
  * `deliveryKey` keeps pointing at them.
  */
-export function deliveryKey(productId: string, revSegment: string, filename: string): string {
-  return `product/${productId}/${revSegment}/delivery/${safeFilename(filename)}`;
+export function deliveryKey(
+  owner: string,
+  productId: string,
+  revSegment: string,
+  filename: string,
+): string {
+  return `${ownerKeyPrefix(owner)}product/${productId}/${revSegment}/delivery/${safeFilename(filename)}`;
 }
 
 /**

@@ -28,7 +28,9 @@ import {
   etagFor,
   getReviewCallbackId,
   getRevision,
+  isOwnedKey,
   presignDownload,
+  type RevisionRef,
 } from '@sketch-to-product-views/shared/store';
 import { GuardrailBlockedError, screenText } from '@sketch-to-product-views/shared/guardrail';
 import { deployedModel, findModel, selectParam } from '@sketch-to-product-views/shared/registry';
@@ -101,6 +103,12 @@ export async function submit(event: ApiEvent): Promise<ApiResult> {
   const { errors } = validatePackage(body.inputs);
   if (errors.length > 0) return fail(400, `inputs: ${errors.join(' ')}`);
 
+  // Only keys under the caller's own prefix: a revision must not be able to point the
+  // pipeline at another user's uploads, whose service role could read them.
+  if (body.inputs.some((i) => !i.key || !isOwnedKey(submittedBy, i.key))) {
+    return fail(400, 'inputs: a key is not one of your uploads.');
+  }
+
   let productMetadata: ProductMetadata | undefined;
   if (body.productMetadata) {
     const checked = validateProductMetadata(body.productMetadata);
@@ -152,10 +160,11 @@ export async function startRevision(input: StartRevisionInput) {
   // Upload and submit are already done by the time a submit lands: the bytes are in object storage
   // and the manifest is what this request carries. Recording them here rather than in the
   // pipeline keeps the rail honest — the UI shows what has happened, not what is planned.
-  await emit(revision.revisionId, 'upload', 'passed', {
+  const ref = { owner: input.owner, revisionId: revision.revisionId };
+  await emit(ref, 'upload', 'passed', {
     message: `${input.inputs.length} file(s) received.`,
   });
-  await emit(revision.revisionId, 'submit', 'passed', {
+  await emit(ref, 'submit', 'passed', {
     message: `Revision ${revision.revision} manifest recorded.`,
   });
 
@@ -202,11 +211,12 @@ export async function status(event: ApiEvent): Promise<ApiResult> {
   const revisionId = event.pathParameters?.id;
   if (!revisionId) return fail(400, 'Missing revision id.');
 
-  const state = await getRevision(revisionId);
+  // Looked up under the caller's own key, so another user's revision is simply not found:
+  // a 404 either way, and the route says nothing about which ids exist.
+  const state = await getRevision({ owner: reader.sub, revisionId });
   if (!state) return fail(404, 'Unknown revision.');
-  // 403 rather than 404: the caller is authenticated and the revision does exist, and
-  // pretending otherwise would make this route an existence oracle in the other direction.
-  if (!mayReadRevision(state, reader.sub)) return fail(403, 'Not your revision.');
+  // Still checked: the key is the first boundary, this is the second.
+  if (!mayReadRevision(state, reader.sub)) return fail(404, 'Unknown revision.');
 
   const etag = etagFor(state);
   const headers = { etag, 'cache-control': 'no-cache' };
@@ -273,7 +283,8 @@ export async function review(event: ApiEvent): Promise<ApiResult> {
   const parsed = reviewDecisionSchema.safeParse(sanitizeReviewBody(parseBody(event)));
   if (!parsed.success) return badRequest(parsed.error);
 
-  const state = await getRevision(revisionId);
+  const ref = { owner: reviewer.sub, revisionId };
+  const state = await getRevision(ref);
   if (!state) return fail(404, 'Unknown revision.');
   // Before the state-machine check, so a caller with no business here cannot learn whether
   // a gate is open on someone else's run.
@@ -307,7 +318,7 @@ export async function review(event: ApiEvent): Promise<ApiResult> {
     }
   }
 
-  await resolveReviewGate(revisionId, decision, reviewer.name);
+  await resolveReviewGate(ref, decision, reviewer.name);
 
   return json(202, { ok: true });
 }
@@ -317,11 +328,11 @@ export async function review(event: ApiEvent): Promise<ApiResult> {
  * revision is `awaiting_review` and that this caller may decide.
  */
 export async function resolveReviewGate(
-  revisionId: string,
+  ref: RevisionRef,
   decision: ReviewDecision,
   reviewedBy: string,
 ): Promise<void> {
-  const callbackId = await getReviewCallbackId(revisionId);
+  const callbackId = await getReviewCallbackId(ref);
   if (!callbackId) {
     // The revision says it is waiting but no token was recorded. Reporting success here
     // would leave the run parked forever with the UI claiming it had been resolved.

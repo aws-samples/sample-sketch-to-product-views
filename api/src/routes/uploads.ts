@@ -9,12 +9,21 @@ import {
   getArtifact,
   headArtifact,
   inputKey,
+  isOwnedKey,
   presignDownload,
   presignUpload,
   sniffImageType,
   type StoredObject,
 } from '@sketch-to-product-views/shared/store';
-import { badRequest, fail, json, parseBody, type ApiEvent, type ApiResult } from '../http.js';
+import {
+  badRequest,
+  caller,
+  fail,
+  json,
+  parseBody,
+  type ApiEvent,
+  type ApiResult,
+} from '../http.js';
 
 /**
  * Upload, in three legs: presign → the browser PUTs straight to S3 → confirm.
@@ -26,6 +35,8 @@ import { badRequest, fail, json, parseBody, type ApiEvent, type ApiResult } from
 const PRODUCT_ID = /^[A-Za-z0-9][\w.-]{0,63}$/;
 
 export async function presign(event: ApiEvent): Promise<ApiResult> {
+  // First, so the key is minted under the verified caller's own prefix and nobody else's.
+  const owner = caller(event).sub;
   const parsed = presignRequestSchema.safeParse(sanitizePresignBody(parseBody(event)));
   if (!parsed.success) return badRequest(parsed.error);
   const { productId, filename, contentType, sizeBytes } = parsed.data;
@@ -44,7 +55,7 @@ export async function presign(event: ApiEvent): Promise<ApiResult> {
   // and inventing one would put a fake revision in the key. The uuid inside `inputKey` is
   // what makes the key unique; the revision then references it by the key echoed back here,
   // so nothing needs to be able to derive it from a revision.
-  const key = inputKey(productId, filename);
+  const key = inputKey(owner, productId, filename);
 
   const response: PresignResponse = {
     uploadUrl: await presignUpload(key, contentType),
@@ -68,13 +79,15 @@ export async function presign(event: ApiEvent): Promise<ApiResult> {
  * confirm would HEAD any key in the bucket and report its size and content type back,
  * which makes it an oracle for objects the caller never uploaded.
  */
-const INPUT_KEY = /^product\/[\w.-]{1,64}\/uploads\/[\w-]+\/[\w.-]+$/;
+const INPUT_KEY = /^user\/[A-Za-z0-9_.:=+@-]{1,128}\/product\/[\w.-]{1,64}\/uploads\/[\w-]+\/[\w.-]+$/;
 
 export async function confirm(event: ApiEvent): Promise<ApiResult> {
+  const owner = caller(event).sub;
   const body = parseBody(event) as { key?: unknown };
   const key = typeof body.key === 'string' ? body.key : '';
   if (!key) return fail(400, 'Missing key.');
-  if (!INPUT_KEY.test(key)) return fail(400, 'Not an upload key.');
+  // Both: the shape of an upload key, and under this caller's own prefix.
+  if (!INPUT_KEY.test(key) || !isOwnedKey(owner, key)) return fail(400, 'Not an upload key.');
 
   const checked = await checkUploadedImage(
     () => headArtifact(key),

@@ -1,7 +1,12 @@
 import { validatePackage } from '@sketch-to-product-views/contracts';
 import { screenText, type ScreenField } from '@sketch-to-product-views/shared/guardrail';
 import { checkInputImage, checkInputSize } from '@sketch-to-product-views/shared/image';
-import { getArtifact, headArtifact, sniffImageType } from '@sketch-to-product-views/shared/store';
+import {
+  getArtifact,
+  headArtifact,
+  isOwnedKey,
+  sniffImageType,
+} from '@sketch-to-product-views/shared/store';
 import type { PipelineInput } from '../input.js';
 
 /**
@@ -48,8 +53,14 @@ export interface ValidateResult {
 
 type FileResult = { check: FileCheck } | { error: string };
 
-async function checkFile(file: PipelineInput['inputs'][number]): Promise<FileResult> {
+async function checkFile(
+  file: PipelineInput['inputs'][number],
+  owner: string,
+): Promise<FileResult> {
   if (!file.key) return { error: `${file.filename} has no storage key and cannot be read.` };
+  // The API already refuses a key outside the submitter's prefix. Checked again here because
+  // this function's role can read the whole bucket: an input must never be another user's.
+  if (!isOwnedKey(owner, file.key)) return { error: `${file.filename} is not one of your uploads.` };
 
   let bytes: Uint8Array;
   try {
@@ -97,7 +108,7 @@ export async function validate(input: PipelineInput): Promise<ValidateResult> {
   // Sequential rather than parallel: at most five files, and it keeps at most one image
   // in memory at a time.
   for (const file of input.inputs) {
-    const result = await checkFile(file);
+    const result = await checkFile(file, input.submittedBy);
     if ('error' in result) failures.push(result.error);
     else checks.push(result.check);
   }

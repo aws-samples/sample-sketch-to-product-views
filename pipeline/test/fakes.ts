@@ -1,5 +1,7 @@
 import type { DurableContext } from '@aws/durable-execution-sdk-js';
 import type { PipelineState, StageEvent } from '@sketch-to-product-views/contracts';
+// Bound here, before any test mocks the module: the real ownership check, not a copy of it.
+import { isOwnedKey } from '@sketch-to-product-views/shared/store';
 
 /**
  * In-memory stand-ins for the pipeline's two boundaries: the durable context and the store.
@@ -99,6 +101,8 @@ export interface FakeStore {
   objects: Map<string, Uint8Array>;
   revision: Partial<PipelineState>;
   events: Pick<StageEvent, 'stage' | 'status' | 'message' | 'attempt'>[];
+  /** Every revision address the pipeline used, so a test can check whose keys it wrote. */
+  refs: { owner: string; revisionId: string }[];
   exports: Record<string, unknown>;
 }
 
@@ -108,10 +112,13 @@ export function fakeStore(sniffImageType: (bytes: Uint8Array) => string | undefi
     objects: new Map(),
     revision: {},
     events: [],
+    refs: [],
     exports: {},
   };
+  const track = (ref: { owner: string; revisionId: string }) => store.refs.push(ref);
   store.exports = {
     sniffImageType,
+    isOwnedKey,
     headArtifact: async (key: string) => {
       const bytes = store.objects.get(key);
       return bytes && { contentType: 'application/octet-stream', sizeBytes: bytes.byteLength };
@@ -124,16 +131,21 @@ export function fakeStore(sniffImageType: (bytes: Uint8Array) => string | undefi
     putArtifact: async (key: string, bytes: Uint8Array) => {
       store.objects.set(key, bytes);
     },
-    patchRevision: async (_id: string, delta: Partial<PipelineState>) => {
+    patchRevision: async (ref: { owner: string; revisionId: string }, delta: Partial<PipelineState>) => {
+      track(ref);
       Object.assign(store.revision, delta);
     },
-    getRevision: async () => store.revision,
+    getRevision: async (ref: { owner: string; revisionId: string }) => {
+      track(ref);
+      return store.revision;
+    },
     emit: async (
-      _id: string,
+      ref: { owner: string; revisionId: string },
       stage: StageEvent['stage'],
       status: StageEvent['status'],
       opts: { message?: string; attempt?: number } = {},
     ) => {
+      track(ref);
       store.events.push({
         stage,
         status,
@@ -146,7 +158,9 @@ export function fakeStore(sniffImageType: (bytes: Uint8Array) => string | undefi
     deliveryKey: () => 'delivery',
     revisionSegment: (createdAt: string, revisionId: string) => `${createdAt}-${revisionId}`,
     candidateKey: () => 'candidate',
-    setReviewCallbackId: async () => undefined,
+    setReviewCallbackId: async (ref: { owner: string; revisionId: string }) => {
+      track(ref);
+    },
     importArtifact: async (from: { bucket: string; key: string }, key: string) => {
       store.objects.set(key, new TextEncoder().encode(`${from.bucket}/${from.key}`));
     },

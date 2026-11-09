@@ -42,7 +42,7 @@ also acceptance checks.
 | asked views | `viewsToRemake` | front → all four; back → back and both profiles; a profile → itself |
 | regenerations | `requestsByView`, `changedAttributes` | oldest first per view; aspects once each |
 | `regenerate` without notes | decision schema | rejected; `approve` without notes accepted |
-| owner / other subject / ownerless revision | authz | owner reads and reviews; other neither; ownerless open to any authenticated subject |
+| owner / other subject / empty owner | authz | owner reads and reviews; other neither (404: not found under their key); empty owner matches nobody |
 | the aspects | inspect | aligned with the CSV on names, sources, weights and hard facts; colour never compared with the sketch; only object type, colour and presentation are hard; `side` refused as a candidate view |
 
 ## Analysis

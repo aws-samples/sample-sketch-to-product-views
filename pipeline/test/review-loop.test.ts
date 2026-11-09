@@ -26,9 +26,9 @@ let keys = 0;
 mock.module('@sketch-to-product-views/shared/store', {
   namedExports: {
     ...store.exports,
-    candidateKey: (_p: string, rev: string, id: string) =>
+    candidateKey: (_o: string, _p: string, rev: string, id: string) =>
       `product/x/${rev}/candidates/${id}-${(keys += 1)}.png`,
-    deliveryKey: (_p: string, rev: string, filename: string) =>
+    deliveryKey: (_o: string, _p: string, rev: string, filename: string) =>
       `product/x/${rev}/delivery/${filename}`,
   },
 });
@@ -138,12 +138,13 @@ const input: PipelineInput = {
   revisionId: 'r-1',
   productId: 'MODEL-1',
   modelId: 'gpt-image-flare',
+  submittedBy: 'u-1',
   createdAt: '2026-10-12T10:00:00.000Z',
-  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'k/sketch.png' }],
+  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'user/u-1/k/sketch.png' }],
 };
 
 test('a regeneration routes the description, remakes those views, and reviews again', async () => {
-  store.objects.set('k/sketch.png', IMAGE);
+  store.objects.set('user/u-1/k/sketch.png', IMAGE);
   store.revision = { candidates: [] };
   routes = [
     {
@@ -240,7 +241,7 @@ test('a regeneration routes the description, remakes those views, and reviews ag
 });
 
 test('a run whose two attempts, the default budget, the critic rejects parks at review with the best', async () => {
-  store.objects.set('k/sketch.png', IMAGE);
+  store.objects.set('user/u-1/k/sketch.png', IMAGE);
   store.revision = { candidates: [] };
   store.events.length = 0;
   judged.length = 0;
@@ -298,7 +299,7 @@ test('a review gate that ends without a decision fails the run and says so on th
 });
 
 test("a run's own attempt budget replaces the deployment's", async () => {
-  store.objects.set('k/sketch.png', IMAGE);
+  store.objects.set('user/u-1/k/sketch.png', IMAGE);
   store.revision = { candidates: [] };
   store.events.length = 0;
   judged.length = 0;

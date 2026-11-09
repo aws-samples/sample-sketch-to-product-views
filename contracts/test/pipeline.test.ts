@@ -45,6 +45,7 @@ test('a stored revision that has not reached every stage still parses', () => {
     status: 'running',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    owner: 'user-1',
     modelId: 'stub',
     attemptBudget: 3,
     attempt: 0,
@@ -110,10 +111,16 @@ test('a pipeline input may carry the design notes, within their length limit', (
   const base = {
     revisionId: 'r1',
     productId: 'demo--A1',
-    inputs: [{ role: 'image', filename: 's.jpg', url: '', key: 'product/x/uploads/u/s.jpg' }],
+    inputs: [
+      { role: 'image', filename: 's.jpg', url: '', key: 'user/u-1/product/x/uploads/u/s.jpg' },
+    ],
     modelId: 'gpt-image-flare',
+    submittedBy: 'u-1',
     createdAt: '2026-10-20T09:00:00.000Z',
   };
+  // Without an owner there is no key to build: the payload is refused.
+  const { submittedBy: _, ...ownerless } = base;
+  assert.equal(pipelineInputSchema.safeParse(ownerless).success, false);
   const requests = { notes: 'Ada: a longer handle', reviewedBy: 'Ada' };
   assert.equal(pipelineInputSchema.safeParse({ ...base, requests }).success, true);
   assert.equal(

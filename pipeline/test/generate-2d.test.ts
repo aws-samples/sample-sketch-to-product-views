@@ -11,7 +11,7 @@ let keys = 0;
 mock.module('@sketch-to-product-views/shared/store', {
   namedExports: {
     ...store.exports,
-    candidateKey: (_p: string, _r: string, id: string) => `candidates/${id}-${(keys += 1)}.png`,
+    candidateKey: (_o: string, _p: string, _r: string, id: string) => `candidates/${id}-${(keys += 1)}.png`,
   },
 });
 
@@ -49,8 +49,9 @@ const input = (modelId: string): PipelineInput => ({
   revisionId: 'r-1',
   productId: 'MODEL-1',
   modelId,
+  submittedBy: 'u-1',
   createdAt: '2026-09-29T10:00:00.000Z',
-  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'k/sketch.png' }],
+  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'user/u-1/k/sketch.png' }],
 });
 
 const spec: ProductSpec = {
@@ -74,7 +75,7 @@ const front = (key: string): Candidate => ({
 
 test('the front is one call from the sketch, at the shared size and quality', async () => {
   const sketch = await png(40);
-  store.objects.set('k/sketch.png', sketch);
+  store.objects.set('user/u-1/k/sketch.png', sketch);
   const { generator, requests } = fakeGenerator(await png(200));
 
   const candidate = await generateView(
@@ -100,7 +101,7 @@ test('the front is one call from the sketch, at the shared size and quality', as
   );
   assert.equal(candidate.view, 'front');
   assert.equal(candidate.attempt, 1);
-  assert.deepEqual(candidate.referenceKeys, ['k/sketch.png']);
+  assert.deepEqual(candidate.referenceKeys, ['user/u-1/k/sketch.png']);
   assert.equal(candidate.prompt, requests[0].prompt);
   assert.ok(candidate.key && store.objects.has(candidate.key), 'the view is in S3');
   assert.equal(candidate.latencyMs, 90_000);
@@ -114,15 +115,15 @@ test('a material sample is sent after the sketch, and the prompt makes it decide
       .jpeg()
       .toBuffer(),
   );
-  store.objects.set('k/sketch.png', sketch);
-  store.objects.set('k/swatch.jpg', swatch);
+  store.objects.set('user/u-1/k/sketch.png', sketch);
+  store.objects.set('user/u-1/k/swatch.jpg', swatch);
   const { generator, requests } = fakeGenerator(await png(200));
   const withSwatch = input('gpt-image-flare');
   withSwatch.inputs.push({
     role: 'swatch',
     filename: 'w.jpg',
     url: 'https://x/w.jpg',
-    key: 'k/swatch.jpg',
+    key: 'user/u-1/k/swatch.jpg',
   });
 
   const candidate = await generateView(withSwatch, spec, 1, 'front', generator, 'seg', {
@@ -132,7 +133,7 @@ test('a material sample is sent after the sketch, and the prompt makes it decide
   assert.deepEqual(requests[0].sketch, sketch);
   assert.deepEqual(requests[0].references, [swatch]);
   assert.match(requests[0].prompt, /The second is a sample of its material/);
-  assert.deepEqual(candidate.referenceKeys, ['k/sketch.png', 'k/swatch.jpg']);
+  assert.deepEqual(candidate.referenceKeys, ['user/u-1/k/sketch.png', 'user/u-1/k/swatch.jpg']);
 });
 
 test('the analyser decides the images: design references in upload order, the first material as the sample, the rest as references', async () => {
@@ -140,14 +141,14 @@ test('the analyser decides the images: design references in upload order, the fi
     [10, 20, 30, 40, 50].map(png),
   );
   const files = { material, photo, sketch, extra, unrelated };
-  for (const [name, bytes] of Object.entries(files)) store.objects.set(`k/${name}.png`, bytes);
+  for (const [name, bytes] of Object.entries(files)) store.objects.set(`user/u-1/k/${name}.png`, bytes);
   const { generator, requests } = fakeGenerator(await png(200));
   const untagged = {
     ...input('gpt-image-flare'),
     inputs: Object.keys(files).map((name) => ({
       filename: `${name}.png`,
       url: '',
-      key: `k/${name}.png`,
+      key: `user/u-1/k/${name}.png`,
     })),
   };
   const read: ProductSpec = {
@@ -158,10 +159,10 @@ test('the analyser decides the images: design references in upload order, the fi
   const candidate = await generateView(untagged, read, 1, 'front', generator, 'seg', { settings });
 
   assert.deepEqual(candidate.referenceKeys, [
-    'k/photo.png',
-    'k/sketch.png',
-    'k/extra.png',
-    'k/material.png',
+    'user/u-1/k/photo.png',
+    'user/u-1/k/sketch.png',
+    'user/u-1/k/extra.png',
+    'user/u-1/k/material.png',
   ]);
   assert.deepEqual(requests[0].sketch, photo);
   assert.match(
@@ -172,13 +173,13 @@ test('the analyser decides the images: design references in upload order, the fi
 
 test('a view the sketch does not draw is made from the front render alone', async () => {
   const render = await png(120);
-  store.objects.set('k/sketch.png', await png(40));
-  store.objects.set('k/front.png', render);
+  store.objects.set('user/u-1/k/sketch.png', await png(40));
+  store.objects.set('user/u-1/k/front.png', render);
   const { generator, requests } = fakeGenerator(await png(200));
 
   const back = await generateView(input('gpt-image-flare'), spec, 2, 'back', generator, 'seg', {
     settings,
-    front: front('k/front.png'),
+    front: front('user/u-1/k/front.png'),
   });
 
   assert.deepEqual(requests[0].sketch, render, 'the render fills the dispatcher sketch slot');
@@ -191,25 +192,25 @@ test('a view the sketch does not draw is made from the front render alone', asyn
   assert.match(requests[0].prompt, /the back view, seen from directly behind/);
   assert.equal(back.view, 'back');
   assert.equal(back.attempt, 2);
-  assert.deepEqual(back.referenceKeys, ['k/front.png']);
+  assert.deepEqual(back.referenceKeys, ['user/u-1/k/front.png']);
 });
 
 test('a profile the sketch draws gets the sketch, the material sample, the front and the back, in that order', async () => {
   const sketch = await png(40);
   const swatch = await png(90);
   const render = await png(120);
-  store.objects.set('k/sketch.png', sketch);
-  store.objects.set('k/swatch.png', swatch);
-  store.objects.set('k/front.png', render);
+  store.objects.set('user/u-1/k/sketch.png', sketch);
+  store.objects.set('user/u-1/k/swatch.png', swatch);
+  store.objects.set('user/u-1/k/front.png', render);
   const backRender = await png(160);
-  store.objects.set('k/back.png', backRender);
+  store.objects.set('user/u-1/k/back.png', backRender);
   const { generator, requests } = fakeGenerator(await png(200));
   const withSwatch = input('gpt-image-flare');
   withSwatch.inputs.push({
     role: 'swatch',
     filename: 'w.png',
     url: 'https://x/w.png',
-    key: 'k/swatch.png',
+    key: 'user/u-1/k/swatch.png',
   });
 
   const left = await generateView(
@@ -221,8 +222,8 @@ test('a profile the sketch draws gets the sketch, the material sample, the front
     'seg',
     {
       settings,
-      front: front('k/front.png'),
-      back: { ...front('k/back.png'), id: 'back-1', view: 'back' },
+      front: front('user/u-1/k/front.png'),
+      back: { ...front('user/u-1/k/back.png'), id: 'back-1', view: 'back' },
     },
   );
 
@@ -235,10 +236,10 @@ test('a profile the sketch draws gets the sketch, the material sample, the front
   );
   assert.match(requests[0].prompt, /the left side view, in full left profile/);
   assert.deepEqual(left.referenceKeys, [
-    'k/sketch.png',
-    'k/swatch.png',
-    'k/front.png',
-    'k/back.png',
+    'user/u-1/k/sketch.png',
+    'user/u-1/k/swatch.png',
+    'user/u-1/k/front.png',
+    'user/u-1/k/back.png',
   ]);
 });
 
@@ -247,17 +248,17 @@ test('every uploaded image is sent as the sketch, in upload order, and numbered 
   const backSketch = await png(50);
   const swatch = await png(90);
   const render = await png(120);
-  store.objects.set('k/front-sketch.png', frontSketch);
-  store.objects.set('k/back-sketch.png', backSketch);
-  store.objects.set('k/swatch.png', swatch);
-  store.objects.set('k/front.png', render);
+  store.objects.set('user/u-1/k/front-sketch.png', frontSketch);
+  store.objects.set('user/u-1/k/back-sketch.png', backSketch);
+  store.objects.set('user/u-1/k/swatch.png', swatch);
+  store.objects.set('user/u-1/k/front.png', render);
   const { generator, requests } = fakeGenerator(await png(200));
   const twoFiles: PipelineInput = {
     ...input('gpt-image-flare'),
     inputs: [
-      { role: 'image', filename: 'f.png', url: 'https://x/f.png', key: 'k/front-sketch.png' },
-      { role: 'image', filename: 'b.png', url: 'https://x/b.png', key: 'k/back-sketch.png' },
-      { role: 'swatch', filename: 'w.png', url: 'https://x/w.png', key: 'k/swatch.png' },
+      { role: 'image', filename: 'f.png', url: 'https://x/f.png', key: 'user/u-1/k/front-sketch.png' },
+      { role: 'image', filename: 'b.png', url: 'https://x/b.png', key: 'user/u-1/k/back-sketch.png' },
+      { role: 'swatch', filename: 'w.png', url: 'https://x/w.png', key: 'user/u-1/k/swatch.png' },
     ],
   };
 
@@ -268,7 +269,7 @@ test('every uploaded image is sent as the sketch, in upload order, and numbered 
     'back',
     generator,
     'seg',
-    { settings, front: front('k/front.png') },
+    { settings, front: front('user/u-1/k/front.png') },
   );
 
   assert.deepEqual(requests[0].sketch, frontSketch);
@@ -278,15 +279,15 @@ test('every uploaded image is sent as the sketch, in upload order, and numbered 
     /^The first two attached images are the designer's images of one flames cap, each showing the same object; together they are the sketch\. The third is a sample of its material\. The fourth is a photograph of the finished product/,
   );
   assert.deepEqual(back.referenceKeys, [
-    'k/front-sketch.png',
-    'k/back-sketch.png',
-    'k/swatch.png',
-    'k/front.png',
+    'user/u-1/k/front-sketch.png',
+    'user/u-1/k/back-sketch.png',
+    'user/u-1/k/swatch.png',
+    'user/u-1/k/front.png',
   ]);
 });
 
 test('a view other than the front refuses to run without the front render', async () => {
-  store.objects.set('k/sketch.png', await png(40));
+  store.objects.set('user/u-1/k/sketch.png', await png(40));
   const { generator, requests } = fakeGenerator(await png(200));
   await assert.rejects(
     () => generateView(input('gpt-image-flare'), spec, 1, 'right', generator, 'seg', { settings }),

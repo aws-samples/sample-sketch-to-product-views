@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 import sharp from 'sharp';
 // The real sniffer, bound before the store is mocked: the stage's magic-byte gate is part of
 // what is under test, only the S3 calls are faked.
-import { sniffImageType } from '@sketch-to-product-views/shared/store';
+import { isOwnedKey, sniffImageType } from '@sketch-to-product-views/shared/store';
 import type { PipelineInput } from '../src/input.js';
 
 /** Stands in for the bucket: key -> bytes. `sizeOverride` fakes a HEAD size without the bytes. */
@@ -13,6 +13,7 @@ const gets: string[] = [];
 mock.module('@sketch-to-product-views/shared/store', {
   namedExports: {
     sniffImageType,
+    isOwnedKey,
     headArtifact: async (key: string) => {
       const found = objects.get(key);
       if (!found) return undefined;
@@ -47,6 +48,7 @@ function packageOf(...files: { key: string; filename: string }[]): PipelineInput
     revisionId: 'r-1',
     productId: 'P-1',
     modelId: 'gpt-image-flare',
+    submittedBy: 'u-1',
     createdAt: '2026-09-28T10:00:00.000Z',
     inputs: files.map((file) => ({
       ...file,
@@ -59,9 +61,9 @@ function packageOf(...files: { key: string; filename: string }[]): PipelineInput
 test('a valid package passes, and the checks carry size and dimensions', async () => {
   reset();
   const bytes = await png(512, 768);
-  objects.set('k/front.png', { bytes });
+  objects.set('user/u-1/k/front.png', { bytes });
 
-  const result = await validate(packageOf({ key: 'k/front.png', filename: 'front.png' }));
+  const result = await validate(packageOf({ key: 'user/u-1/k/front.png', filename: 'front.png' }));
 
   assert.deepEqual(result.checks, [
     {
@@ -77,10 +79,10 @@ test('a valid package passes, and the checks carry size and dimensions', async (
 
 test('an object over 3.75 MB is rejected from its HEAD size, without being downloaded', async () => {
   reset();
-  objects.set('k/big.png', { bytes: await png(64, 64), sizeOverride: 4_200_000 });
+  objects.set('user/u-1/k/big.png', { bytes: await png(64, 64), sizeOverride: 4_200_000 });
 
   await assert.rejects(
-    () => validate(packageOf({ key: 'k/big.png', filename: 'big.png' })),
+    () => validate(packageOf({ key: 'user/u-1/k/big.png', filename: 'big.png' })),
     (error: Error) =>
       error instanceof ValidationError &&
       /big\.png: too large: 4\.20 MB, the limit is 3\.75 MB/.test(error.message),
@@ -90,10 +92,10 @@ test('an object over 3.75 MB is rejected from its HEAD size, without being downl
 
 test('an image over 8000 px is rejected, naming the file and the limit', async () => {
   reset();
-  objects.set('k/wide.png', { bytes: await png(8001, 10) });
+  objects.set('user/u-1/k/wide.png', { bytes: await png(8001, 10) });
 
   await assert.rejects(
-    () => validate(packageOf({ key: 'k/wide.png', filename: 'wide.png' })),
+    () => validate(packageOf({ key: 'user/u-1/k/wide.png', filename: 'wide.png' })),
     /wide\.png: 8001 px wide, the limit is 8000 px per side/,
   );
 });
@@ -103,10 +105,10 @@ test('a gif is rejected', async () => {
   const gif = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#888' } })
     .gif()
     .toBuffer();
-  objects.set('k/anim.gif', { bytes: gif });
+  objects.set('user/u-1/k/anim.gif', { bytes: gif });
 
   await assert.rejects(
-    () => validate(packageOf({ key: 'k/anim.gif', filename: 'anim.gif' })),
+    () => validate(packageOf({ key: 'user/u-1/k/anim.gif', filename: 'anim.gif' })),
     /anim\.gif is not a readable JPEG, PNG or WebP/,
   );
 });
@@ -114,23 +116,23 @@ test('a gif is rejected', async () => {
 test('a missing object is rejected as unreadable', async () => {
   reset();
   await assert.rejects(
-    () => validate(packageOf({ key: 'k/gone.png', filename: 'gone.png' })),
+    () => validate(packageOf({ key: 'user/u-1/k/gone.png', filename: 'gone.png' })),
     /gone\.png could not be read from storage/,
   );
 });
 
 test('every failing file is named in one error', async () => {
   reset();
-  objects.set('k/ok.png', { bytes: await png(64, 64) });
-  objects.set('k/wide.png', { bytes: await png(8001, 10) });
+  objects.set('user/u-1/k/ok.png', { bytes: await png(64, 64) });
+  objects.set('user/u-1/k/wide.png', { bytes: await png(8001, 10) });
 
   await assert.rejects(
     () =>
       validate(
         packageOf(
-          { key: 'k/gone.png', filename: 'gone.png' },
-          { key: 'k/ok.png', filename: 'ok.png' },
-          { key: 'k/wide.png', filename: 'wide.png' },
+          { key: 'user/u-1/k/gone.png', filename: 'gone.png' },
+          { key: 'user/u-1/k/ok.png', filename: 'ok.png' },
+          { key: 'user/u-1/k/wide.png', filename: 'wide.png' },
         ),
       ),
     (error: Error) =>

@@ -7,11 +7,10 @@
  * Two predicates, deliberately separate, because reading your own run and resolving its
  * approval gate are not the same permission even though today they resolve the same way.
  *
- * A revision records the `sub` that submitted it (`owner`). Revisions written before that
- * field existed have none: those are **legacy** and are treated as readable by any
- * authenticated caller, because retro-fitting an owner is impossible and 403-ing them would
- * break runs that are still in flight. Every revision created from now on has an owner, so
- * this exception ages out on its own.
+ * A revision records the `sub` that submitted it (`owner`), and the owner is also the leading
+ * part of every key the revision is stored under (`USER#{owner}#…`, `user/{owner}/…`), which
+ * IAM enforces for the API (infra/modules/api). These predicates are the in-code half of that
+ * boundary: they still run, so a key built the wrong way is refused here as well.
  */
 
 /**
@@ -19,20 +18,21 @@
  * `PipelineState` and any in-memory record satisfy it without a cast.
  */
 export interface OwnedRevision {
-  owner?: string | undefined;
+  owner: string;
 }
 
+/** An empty owner matches nobody, not even an empty subject. */
 function ownsRevision(state: OwnedRevision, sub: string): boolean {
-  return state.owner === sub;
+  return state.owner !== '' && state.owner === sub;
 }
 
-/** Read: the owner, plus any authenticated caller for a legacy ownerless revision. */
+/** Read: the owner only. */
 export function mayReadRevision(state: OwnedRevision, sub: string): boolean {
-  return state.owner === undefined || ownsRevision(state, sub);
+  return ownsRevision(state, sub);
 }
 
 /**
- * Review: **current policy is owner-reviews-own-run** (plus the legacy exception above).
+ * Review: **current policy is owner-reviews-own-run**.
  *
  * This is the human-approval gate, so the owner is not obviously the right reviewer — a
  * separate reviewer population is a real requirement and not one this codebase can express

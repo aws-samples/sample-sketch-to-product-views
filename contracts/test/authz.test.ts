@@ -19,8 +19,10 @@ test('another subject may neither read nor review it', () => {
   assert.equal(mayReviewRevision(state, 'user-b'), false);
 });
 
-test('a legacy ownerless revision is open to any authenticated subject', () => {
-  const state = {};
-  assert.equal(mayReadRevision(state, 'anyone'), true);
-  assert.equal(mayReviewRevision(state, 'anyone'), true);
+test('a revision with an empty owner is open to nobody, not even an empty subject', () => {
+  const state = { owner: '' };
+  for (const sub of ['', 'anyone']) {
+    assert.equal(mayReadRevision(state, sub), false, sub);
+    assert.equal(mayReviewRevision(state, sub), false, sub);
+  }
 });

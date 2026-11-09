@@ -19,9 +19,9 @@ let keys = 0;
 mock.module('@sketch-to-product-views/shared/store', {
   namedExports: {
     ...store.exports,
-    candidateKey: (_p: string, rev: string, id: string) =>
+    candidateKey: (_o: string, _p: string, rev: string, id: string) =>
       `product/x/${rev}/candidates/${id}-${(keys += 1)}.png`,
-    deliveryKey: (_p: string, rev: string, filename: string) =>
+    deliveryKey: (_o: string, _p: string, rev: string, filename: string) =>
       `product/x/${rev}/delivery/${filename}`,
   },
 });
@@ -85,8 +85,9 @@ const input: PipelineInput = {
   revisionId: 'r-1',
   productId: 'MODEL-1',
   modelId: 'gpt-image-flare',
+  submittedBy: 'u-1',
   createdAt: '2026-09-29T10:00:00.000Z',
-  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'k/sketch.png' }],
+  inputs: [{ role: 'image', filename: 's.png', url: 'https://x/s.png', key: 'user/u-1/k/sketch.png' }],
 };
 const spec: ProductSpec = {
   model: 'MODEL-1',
@@ -95,14 +96,14 @@ const spec: ProductSpec = {
 };
 
 test('a failed profile is remade alone with its corrections; the kept views are delivered', async () => {
-  store.objects.set('k/sketch.png', IMAGE);
+  store.objects.set('user/u-1/k/sketch.png', IMAGE);
   // A stale front from a try of attempt 1 that wrote before its checkpoint: replaced, not kept.
   store.revision = {
     candidates: [
       {
         id: 'stale',
         url: '',
-        key: 'k/stale.png',
+        key: 'user/u-1/k/stale.png',
         modelId: 'm',
         attempt: 1,
         createdAt: '',
@@ -158,10 +159,10 @@ test('a failed profile is remade alone with its corrections; the kept views are 
     ['front', 'back', 'left', 'right'],
   );
   const front = first[0];
-  assert.deepEqual(front.referenceKeys, ['k/sketch.png']);
+  assert.deepEqual(front.referenceKeys, ['user/u-1/k/sketch.png']);
   // The sketch draws the back, so the back gets the sketch and the front render; the profiles,
   // which it does not draw, get the front and back renders alone.
-  assert.deepEqual(first[1].referenceKeys, ['k/sketch.png', front.key]);
+  assert.deepEqual(first[1].referenceKeys, ['user/u-1/k/sketch.png', front.key]);
   assert.deepEqual(first[2].referenceKeys, [front.key, first[1].key]);
   assert.deepEqual(first[3].referenceKeys, [front.key, first[1].key]);
   const second = candidates.filter((c) => c.attempt === 2);

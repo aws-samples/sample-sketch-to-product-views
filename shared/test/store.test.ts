@@ -7,6 +7,9 @@ import {
   etagFor,
   initialStages,
   inputKey,
+  isOwnedKey,
+  ownerKeyPrefix,
+  ownerPrefix,
   revisionSegment,
   revisionStamp,
   safeFilename,
@@ -28,11 +31,30 @@ test('a filename cannot escape its prefix', () => {
 });
 
 test('an upload key is unique per upload, outside any revision prefix', () => {
-  const one = inputKey('MODEL-9', 'sketch.jpg');
-  assert.match(one, /^product\/MODEL-9\/uploads\/[0-9a-f-]{36}\/sketch\.jpg$/);
+  const one = inputKey('user-1', 'MODEL-9', 'sketch.jpg');
+  assert.match(one, /^user\/user-1\/product\/MODEL-9\/uploads\/[0-9a-f-]{36}\/sketch\.jpg$/);
   // Two uploads of the same filename must not collide: a presign happens before the
   // revision exists, so the uuid is the only thing keeping them apart.
-  assert.notEqual(one, inputKey('MODEL-9', 'sketch.jpg'));
+  assert.notEqual(one, inputKey('user-1', 'MODEL-9', 'sketch.jpg'));
+});
+
+test("every key sits under its owner's prefix, and only there", () => {
+  const seg = revisionSegment('2026-09-22T10:11:12.000Z', 'rev-aaa');
+  for (const key of [
+    inputKey('user-1', 'MODEL-9', 'sketch.jpg'),
+    candidateKey('user-1', 'MODEL-9', seg, 'c1', 'image/png'),
+    deliveryKey('user-1', 'MODEL-9', seg, 'MODEL-9-approved.png'),
+  ]) {
+    assert.ok(key.startsWith(ownerKeyPrefix('user-1')), key);
+    assert.equal(isOwnedKey('user-1', key), true, key);
+    assert.equal(isOwnedKey('user-2', key), false, key);
+  }
+  assert.equal(isOwnedKey('user-1', 'user/user-1/../user-2/x.png'), false);
+  assert.equal(ownerPrefix('user-1'), 'USER#user-1#');
+  for (const bad of ['', 'a/b', 'a#b', 'a b', 'a*', 'x'.repeat(129)]) {
+    assert.throws(() => ownerKeyPrefix(bad), /invalid owner id/, bad);
+    assert.throws(() => ownerPrefix(bad), /invalid owner id/, bad);
+  }
 });
 
 test('the revision stamp is compact, colon-free and chronologically sortable', () => {
@@ -68,12 +90,15 @@ test('two revisions of one product get different segments', () => {
 test('a candidate key takes its extension from the content type', () => {
   const seg = revisionSegment('2026-09-22T10:11:12.000Z', 'rev-aaa');
   assert.equal(
-    candidateKey('MODEL-9', seg, 'c1', 'image/png'),
-    `product/MODEL-9/${seg}/candidates/c1.png`,
+    candidateKey('user-1', 'MODEL-9', seg, 'c1', 'image/png'),
+    `user/user-1/product/MODEL-9/${seg}/candidates/c1.png`,
   );
-  assert.match(candidateKey('MODEL-9', seg, 'c1', 'image/jpeg'), /\/c1\.jpg$/);
-  assert.match(candidateKey('MODEL-9', seg, 'c1', 'image/webp'), /\/c1\.webp$/);
-  assert.match(deliveryKey('MODEL-9', seg, 'final asset.glb'), /\/delivery\/final_asset\.glb$/);
+  assert.match(candidateKey('user-1', 'MODEL-9', seg, 'c1', 'image/jpeg'), /\/c1\.jpg$/);
+  assert.match(candidateKey('user-1', 'MODEL-9', seg, 'c1', 'image/webp'), /\/c1\.webp$/);
+  assert.match(
+    deliveryKey('user-1', 'MODEL-9', seg, 'final asset.glb'),
+    /\/delivery\/final_asset\.glb$/,
+  );
 });
 
 test('a second approved run cannot overwrite the first run delivered asset', () => {
@@ -81,11 +106,13 @@ test('a second approved run cannot overwrite the first run delivered asset', () 
   // so the two keys differ only by the revision segment.
   const filename = 'MODEL-9-approved.png';
   const first = deliveryKey(
+    'user-1',
     'MODEL-9',
     revisionSegment('2026-09-22T10:11:12.000Z', 'rev-aaa'),
     filename,
   );
   const second = deliveryKey(
+    'user-1',
     'MODEL-9',
     revisionSegment('2026-09-23T08:00:00.000Z', 'rev-bbb'),
     filename,
@@ -94,7 +121,7 @@ test('a second approved run cannot overwrite the first run delivered asset', () 
   assert.ok(first < second);
   assert.match(
     first,
-    /^product\/MODEL-9\/20260922T101112Z-rev-aaa\/delivery\/MODEL-9-approved\.png$/,
+    /^user\/user-1\/product\/MODEL-9\/20260922T101112Z-rev-aaa\/delivery\/MODEL-9-approved\.png$/,
   );
 });
 

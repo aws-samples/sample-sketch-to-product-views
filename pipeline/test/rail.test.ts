@@ -72,14 +72,15 @@ async function packageWith(productMetadata?: string): Promise<PipelineInput> {
   const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#223' } })
     .png()
     .toBuffer();
-  store.objects.set('k/sketch.png', png);
+  store.objects.set('user/u-1/k/sketch.png', png);
   return {
     revisionId: 'r-1',
     productId: 'MODEL-1',
     modelId: 'gpt-image-flare',
+    submittedBy: 'u-1',
     createdAt: '2026-09-28T10:00:00.000Z',
     inputs: [
-      { role: 'image', filename: 'sketch.png', url: 'https://x/sketch.png', key: 'k/sketch.png' },
+      { role: 'image', filename: 'sketch.png', url: 'https://x/sketch.png', key: 'user/u-1/k/sketch.png' },
     ],
     ...(productMetadata ? { productMetadata: { format: 'json', text: productMetadata } } : {}),
   };
@@ -107,6 +108,26 @@ test('an image-only package ends with a spec observed from the images', async ()
     store.revision.warning,
     'Only the front view is available; the back and the side will be assumed.',
   );
+});
+
+test("every store call is addressed under the payload's owner", async () => {
+  next = [reading({ type: { value: 'lounge chair', source: 'image' } })];
+  const { ctx } = fakeContext();
+  store.refs.length = 0;
+
+  await runIntake(ctx, await packageWith());
+
+  assert.ok(store.refs.length > 0);
+  assert.deepEqual(new Set(store.refs.map((r) => r.owner)), new Set(['u-1']));
+});
+
+test('an input outside the owner\'s prefix fails validation before it is read', async () => {
+  const { ctx } = fakeContext();
+  const input = await packageWith();
+  input.inputs[0] = { ...input.inputs[0], key: 'user/u-2/k/sketch.png' };
+  store.objects.set('user/u-2/k/sketch.png', store.objects.get('user/u-1/k/sketch.png')!);
+
+  await assert.rejects(() => runIntake(ctx, input), /not one of your uploads/);
 });
 
 test('metadata with column names no code knows still reaches the spec as supplied', async () => {
@@ -239,9 +260,9 @@ test('every image reaches the analyser, which decides which one is the material 
     ]),
   ];
   const input = await packageWith();
-  store.objects.set('k/sample.png', store.objects.get('k/sketch.png')!);
+  store.objects.set('user/u-1/k/sample.png', store.objects.get('user/u-1/k/sketch.png')!);
   // No role: the designer tags nothing.
-  input.inputs.push({ filename: 'sample.png', url: 'https://x/s.png', key: 'k/sample.png' });
+  input.inputs.push({ filename: 'sample.png', url: 'https://x/s.png', key: 'user/u-1/k/sample.png' });
   const { ctx } = fakeContext();
 
   const spec = await runIntake(ctx, input);

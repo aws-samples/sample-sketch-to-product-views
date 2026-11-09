@@ -31,19 +31,21 @@ in a JSON log line. The caller is `{sub, name}` from the verified claims (`name`
 | `POST /api/uploads/presign` | `PresignRequest` | `200 PresignResponse` | 400 schema; `415 Unsupported type {t}.`; `413 File exceeds 3.75 MB.`; `400 productId: not a valid product id.` |
 | `POST /api/uploads/confirm` | `{key}` | `200 {ok: true, key}` | `400 Missing key.`; `400 Not an upload key.`; `400 Upload did not complete.`; `400 Uploaded file is empty.`; `413 File exceeds 3.75 MB.`; `415 File is not a JPEG, PNG or WebP image.`; `415 File is a {sniffed}, not the declared {stored}.` |
 | `POST /api/revisions` | `SubmitRequest` | `202 {revisionId}` | 401; 400 schema; `400 modelId: unknown model "{id}"`; `400 modelId: {id} is a {category} model, not an image generator`; `400 inputs: {errors}`; `400 productMetadata: {message}`; `400 settings.{key}: {id} has no {key} setting`; `400 settings.{key}: {id} does not offer {key} "{value}"; options: …`; 400 schema for an `attemptBudget` outside 1–4 |
-| `GET /api/revisions/{id}` | `If-None-Match?` | `200 PipelineState` with `etag`, `cache-control: no-cache`; `304` when the ETag matches | 401; `400 Missing revision id.`; `404 Unknown revision.`; `403 Not your revision.` |
-| `POST /api/revisions/{id}/review` | `ReviewDecision` | `202 {ok: true}` | 401; 400 schema; 404; `403 Not your revision to review.`; `409 This revision is not waiting for a review decision.`; `409 candidateId: these are no longer the views awaiting review.`; `400 candidateId: approve requires an existing candidate.`; `409 This run has used its 3 regenerations.`; `409 The review gate is not ready yet. Retry in a moment.` |
+| `GET /api/revisions/{id}` | `If-None-Match?` | `200 PipelineState` with `etag`, `cache-control: no-cache`; `304` when the ETag matches | 401; `400 Missing revision id.`; `404 Unknown revision.` (also for another user's revision) |
+| `POST /api/revisions/{id}/review` | `ReviewDecision` | `202 {ok: true}` | 401; 400 schema; 404 (also for another user's revision); `403 Not your revision to review.` (owner mismatch on a revision found under the caller's key); `409 This revision is not waiting for a review decision.`; `409 candidateId: these are no longer the views awaiting review.`; `400 candidateId: approve requires an existing candidate.`; `409 This run has used its 3 regenerations.`; `409 The review gate is not ready yet. Retry in a moment.` |
 
 ### Uploads (three legs, bytes never pass through the API)
 
 1. **Presign.** `productId` and `filename` sanitised (single-line) first. Type in {`image/jpeg`, `image/png`, `image/webp`}; size ≤ 3,750,000 bytes; `productId`
    matches `^[A-Za-z0-9][\w.-]{0,63}$` (it is interpolated into the key). Key
-   `product/{productId}/uploads/{uuid}/{safeFilename}` (uploads sit outside any revision prefix:
+   `user/{sub}/product/{productId}/uploads/{uuid}/{safeFilename}` (uploads sit outside any revision prefix:
    no revision exists yet). Presigned PUT with the content type signed in, 15-minute expiry;
    `cdnUrl` is a presigned GET (1 hour). The bucket stays private.
 2. **PUT** from the browser straight to object storage with that `content-type`.
-3. **Confirm.** The key must match `^product\/[\w.-]{1,64}\/uploads\/[\w-]+\/[\w.-]+$` (otherwise
-   confirm would be an existence oracle for any object); HEAD it; read bytes 0–15 only; the
+3. **Confirm.** The key must match
+   `^user\/[A-Za-z0-9_.:=+@-]{1,128}\/product\/[\w.-]{1,64}\/uploads\/[\w-]+\/[\w.-]+$` **and** sit
+   under the caller's own `user/{sub}/` prefix (otherwise confirm would be an existence oracle for
+   any object); HEAD it; read bytes 0–15 only; the
    sniffed type must equal the stored content type.
 
 ### Submit
@@ -51,7 +53,8 @@ in a JSON log line. The caller is `{sub, name}` from the verified claims (`name`
 1. Caller first. 2. Sanitise the body's text fields (`sanitizeSubmitBody`,
 [02](02-data-contracts.md#free-text-sanitisation)), then parse it. 3. Model: `modelId` → registry lookup, else the deployment
 default (`IMAGE_MODEL`, else registry default); category must be `image-control`.
-4. Package rules. 5. Product details re-validated from their text, the format recomputed (the API stands between any request and
+4. Package rules; every input must have a key under the caller's own `user/{sub}/` prefix
+(`400 inputs: a key is not one of your uploads.`). 5. Product details re-validated from their text, the format recomputed (the API stands between any request and
 the analyser's prompt). 6. Create the revision (`owner` = caller `sub`, `attemptBudget` from
 `ATTEMPT_BUDGET`, default 2). 7. Emit `upload` and `submit` passed. 8. Build the durable payload
 and validate it with the pipeline's own schema. 9. Invoke the pipeline **alias** asynchronously
@@ -60,7 +63,8 @@ and validate it with the pipeline's own schema. 9. Invoke the pipeline **alias**
 
 ### Read
 
-Strongly consistent read; ownership check; ETag compare; then **hydrate**: re-mint every URL from
+Strongly consistent read under the caller's own key (another user's revision is a 404, like an
+unknown id); ownership check; ETag compare; then **hydrate**: re-mint every URL from
 its key (inputs, candidates, delivery front and per-view). The stored document holds keys only: a
 presigned URL expires in an hour, a review can wait days.
 
@@ -79,9 +83,10 @@ here.
 
 ### Authorization
 
-Two separate predicates over the stored `owner`: read and review. Current policy: the owner may
-read and review; a revision without an owner (none are created any more) is readable and
-reviewable by any authenticated caller. Review is a separate predicate so that a distinct
+Two boundaries. First, the key: every revision and artifact key starts with the owner's `sub`, and
+the API builds it from the caller's verified `sub`. Second, two predicates over the stored `owner`:
+read and review. Current policy: the owner may read and review; an empty owner matches nobody.
+Revisions without an owner are no longer reachable. Review is a separate predicate so that a distinct
 reviewer population (a group claim, a per-product list) changes only that function.
 
 ### Models

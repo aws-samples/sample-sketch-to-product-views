@@ -7,6 +7,7 @@ import {
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { assertOwnerId } from './owner.js';
 import {
   STAGE_IDS,
   type PipelineState,
@@ -23,8 +24,13 @@ import {
  *
  * Layout — one partition per revision, so reading a run is a single Query:
  *
- *   pk = REV#{revisionId}   sk = META               the revision, minus its events
- *   pk = REV#{revisionId}   sk = EVENT#{seq}        one item per stage transition
+ *   pk = USER#{owner}#REV#{revisionId}   sk = META          the revision, minus its events
+ *   pk = USER#{owner}#REV#{revisionId}   sk = EVENT#{seq}   one item per stage transition
+ *
+ * The partition key starts with the owner's `sub`, so a revision can only be addressed by
+ * the user who owns it: a caller builds the key from their own verified `sub` and finds
+ * nothing under anyone else's. It is also what lets IAM enforce the same boundary, with a
+ * `dynamodb:LeadingKeys` condition on `USER#${aws:PrincipalTag/sub}#*` (infra/modules/api).
  *
  * `seq` is zero-padded to six digits so lexicographic order equals numeric order — an
  * unpadded `EVENT#10` would sort before `EVENT#9` and the UI would render the run out
@@ -46,7 +52,21 @@ function client(): DynamoDBDocumentClient {
   return doc;
 }
 
-const revKey = (revisionId: string) => `REV#${revisionId}`;
+/**
+ * Which revision, and whose. Every read and write takes both, because the owner is part of
+ * the key: there is no way to address a revision by its id alone.
+ */
+export interface RevisionRef {
+  owner: string;
+  revisionId: string;
+}
+
+const revKey = (ref: RevisionRef) => `${ownerPrefix(ref.owner)}REV#${ref.revisionId}`;
+
+/** `USER#{owner}#`: the leading part of every partition key the owner can reach. */
+export function ownerPrefix(owner: string): string {
+  return `USER#${assertOwnerId(owner)}#`;
+}
 const eventKey = (seq: number) => `EVENT#${String(seq).padStart(6, '0')}`;
 
 /** Everything in a PipelineState except the event log, which lives in its own items. */
@@ -98,7 +118,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
     new PutCommand({
       TableName: TABLE(),
       Item: {
-        pk: revKey(meta.revisionId),
+        pk: revKey({ owner: input.owner, revisionId: meta.revisionId }),
         sk: 'META',
         ...meta,
         seq: 0,
@@ -116,7 +136,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
  * Reads the whole run: meta plus its events, assembled into the shape the SPA polls.
  * One Query, because events share the revision's partition.
  */
-export async function getRevision(revisionId: string): Promise<PipelineState | undefined> {
+export async function getRevision(ref: RevisionRef): Promise<PipelineState | undefined> {
   // A Query stops at 1 MB regardless of Limit. A long run's event log can cross that, and
   // a silently truncated log would render as a run that never finished, so follow the
   // continuation key rather than trusting the first page.
@@ -128,7 +148,7 @@ export async function getRevision(revisionId: string): Promise<PipelineState | u
       new QueryCommand({
         TableName: TABLE(),
         KeyConditionExpression: 'pk = :pk',
-        ExpressionAttributeValues: { ':pk': revKey(revisionId) },
+        ExpressionAttributeValues: { ':pk': revKey(ref) },
         ConsistentRead: true,
         ExclusiveStartKey: startKey,
       }),
@@ -152,7 +172,7 @@ export async function getRevision(revisionId: string): Promise<PipelineState | u
 
 /** Shallow-merges a patch and bumps `updatedAt`. Does not touch stage status. */
 export async function patchRevision(
-  revisionId: string,
+  ref: RevisionRef,
   delta: Partial<Omit<PipelineState, 'revisionId' | 'stages' | 'events'>>,
 ): Promise<void> {
   const fields = { ...delta, updatedAt: new Date().toISOString() };
@@ -161,7 +181,7 @@ export async function patchRevision(
   await client().send(
     new UpdateCommand({
       TableName: TABLE(),
-      Key: { pk: revKey(revisionId), sk: 'META' },
+      Key: { pk: revKey(ref), sk: 'META' },
       UpdateExpression: `SET ${entries.map((_, i) => `#f${i} = :v${i}`).join(', ')}`,
       ExpressionAttributeNames: Object.fromEntries(entries.map(([k], i) => [`#f${i}`, k])),
       ExpressionAttributeValues: Object.fromEntries(entries.map(([, v], i) => [`:v${i}`, v])),
@@ -181,7 +201,7 @@ export async function patchRevision(
  * which is what makes the pair of writes idempotent across a replay.
  */
 export async function emit(
-  revisionId: string,
+  ref: RevisionRef,
   stage: StageId,
   status: StageStatus,
   opts: {
@@ -197,7 +217,7 @@ export async function emit(
   const bumped = await client().send(
     new UpdateCommand({
       TableName: TABLE(),
-      Key: { pk: revKey(revisionId), sk: 'META' },
+      Key: { pk: revKey(ref), sk: 'META' },
       UpdateExpression: 'ADD #seq :one SET #updatedAt = :at, #stages.#stage = :run',
       ExpressionAttributeNames: {
         '#seq': 'seq',
@@ -219,7 +239,7 @@ export async function emit(
 
   const event: StageEvent = {
     seq,
-    revisionId,
+    revisionId: ref.revisionId,
     stage,
     status,
     at,
@@ -235,7 +255,7 @@ export async function emit(
   await client().send(
     new PutCommand({
       TableName: TABLE(),
-      Item: { pk: revKey(revisionId), sk: eventKey(seq), event },
+      Item: { pk: revKey(ref), sk: eventKey(seq), event },
     }),
   );
 
@@ -267,11 +287,11 @@ function runFor(
  * the API reads it back to resolve the wait. Held apart from `PipelineState` on purpose:
  * it is an internal handle and must never reach the browser.
  */
-export async function setReviewCallbackId(revisionId: string, callbackId: string): Promise<void> {
+export async function setReviewCallbackId(ref: RevisionRef, callbackId: string): Promise<void> {
   await client().send(
     new UpdateCommand({
       TableName: TABLE(),
-      Key: { pk: revKey(revisionId), sk: 'META' },
+      Key: { pk: revKey(ref), sk: 'META' },
       UpdateExpression: 'SET reviewCallbackId = :id',
       ExpressionAttributeValues: { ':id': callbackId },
       ConditionExpression: 'attribute_exists(pk)',
@@ -279,11 +299,11 @@ export async function setReviewCallbackId(revisionId: string, callbackId: string
   );
 }
 
-export async function getReviewCallbackId(revisionId: string): Promise<string | undefined> {
+export async function getReviewCallbackId(ref: RevisionRef): Promise<string | undefined> {
   const result = await client().send(
     new GetCommand({
       TableName: TABLE(),
-      Key: { pk: revKey(revisionId), sk: 'META' },
+      Key: { pk: revKey(ref), sk: 'META' },
       ProjectionExpression: 'reviewCallbackId',
       ConsistentRead: true,
     }),
