@@ -18,6 +18,21 @@ output "table_name" {
   value       = module.storage.table_name
 }
 
+output "table_arn" {
+  description = "ARN of the revisions table; for the per-user access check in infra/README.md."
+  value       = module.storage.table_arn
+}
+
+output "artifacts_bucket_arn" {
+  description = "ARN of the artifacts bucket; for the per-user access check in infra/README.md."
+  value       = module.storage.artifacts_bucket_arn
+}
+
+output "api_user_data_role_arn" {
+  description = "The role the API assumes per request with the caller's sub as a session tag; its only path to DynamoDB and S3."
+  value       = module.api.user_data_role_arn
+}
+
 output "pipeline_alias_arn" {
   description = "Qualified ARN of the durable pipeline function. Durable invokes require a qualified ARN."
   value       = module.pipeline.alias_arn

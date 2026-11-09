@@ -13,3 +13,8 @@ output "origin_secret" {
   value       = random_password.origin_verify[var.origin_secret_slot].result
   sensitive   = true
 }
+
+output "user_data_role_arn" {
+  description = "The role the API assumes per request with the caller's sub as a session tag; the only path to DynamoDB and S3."
+  value       = aws_iam_role.user_data.arn
+}

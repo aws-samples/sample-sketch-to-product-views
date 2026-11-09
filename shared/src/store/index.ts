@@ -8,3 +8,4 @@
 export * from './revisions.js';
 export * from './artifacts.js';
 export * from './owner.js';
+export * from './scope.js';

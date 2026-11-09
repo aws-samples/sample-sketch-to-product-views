@@ -156,6 +156,21 @@ test('the caller comes from validated JWT claims, never from the body', () => {
   });
 });
 
+test('a subject that could not be a key prefix is a 403 before the role is assumed', async () => {
+  // With the user-data role configured every route runs as its caller; an unusable `sub`
+  // must stop here, not reach STS (there is no STS client in this test to reach).
+  process.env.USER_DATA_ROLE_ARN = 'arn:aws:iam::000000000000:role/test-api-user-data';
+  try {
+    const event = eventFor('GET /api/models');
+    (event.requestContext.authorizer as unknown as { jwt: { claims: { sub: string } } }).jwt.claims.sub =
+      'user/../other';
+    const result = (await handler(event)) as { statusCode: number };
+    assert.equal(result.statusCode, 403);
+  } finally {
+    delete process.env.USER_DATA_ROLE_ARN;
+  }
+});
+
 test('a request with no verified subject is rejected rather than treated as anonymous', () => {
   const event = eventFor('POST /api/revisions');
   (event.requestContext as { authorizer?: unknown }).authorizer = undefined;

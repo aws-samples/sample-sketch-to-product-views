@@ -55,6 +55,11 @@ resource "aws_lambda_function" "api" {
       GUARDRAIL_VERSION = var.guardrail_version
       # Both slots: CloudFront sends one, and the other stays valid through a rotation.
       ORIGIN_VERIFY_SECRETS = join(",", [for slot in ["a", "b"] : random_password.origin_verify[slot].result])
+      # The per-user token exchange (shared/src/store/scope.ts): every store call goes through
+      # this role, assumed with the caller's `sub` as a session tag, and never through the
+      # function's own role, which has no DynamoDB or S3 access.
+      USER_DATA_ROLE_ARN        = aws_iam_role.user_data.arn
+      STORE_REQUIRES_USER_SCOPE = "true"
     }
   }
 
@@ -146,28 +151,14 @@ data "aws_iam_policy_document" "api" {
     resources = ["${aws_cloudwatch_log_group.api.arn}:*"]
   }
 
+  # No DynamoDB or S3 here: the function reaches user data only by assuming the user-data role
+  # below with the caller's `sub` as the one session tag. Both actions are needed: AssumeRole,
+  # and TagSession to pass the tag (https://docs.aws.amazon.com/IAM/latest/UserGuide/id_session-tags.html).
   statement {
-    sid    = "Revisions"
-    effect = "Allow"
-
-    actions = [
-      "dynamodb:GetItem",
-      "dynamodb:Query",
-      "dynamodb:PutItem",
-      "dynamodb:UpdateItem",
-    ]
-
-    # Base table only: the table has no secondary index.
-    resources = [var.table_arn]
-  }
-
-  # Presigning is a local signing operation, but the signature is only usable if the
-  # signer itself holds the permission it delegates.
-  statement {
-    sid       = "PresignArtifacts"
+    sid       = "AssumeUserData"
     effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject"]
-    resources = ["${var.artifacts_arn}/*"]
+    actions   = ["sts:AssumeRole", "sts:TagSession"]
+    resources = [aws_iam_role.user_data.arn]
   }
 
   statement {
@@ -231,6 +222,106 @@ data "aws_iam_policy_document" "api" {
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
     resources = [aws_sqs_queue.dlq.arn]
+  }
+}
+
+/**
+ * The user-data role: the only way the API reaches DynamoDB and S3.
+ *
+ * Assumed per request by the API function with the caller's verified `sub` as a session tag.
+ * Every permission is limited to keys that start with that tag, so a request can only reach its
+ * caller's own revisions and artifacts, even if the code built a wrong key: IAM denies it.
+ *   DynamoDB: partition key `USER#{sub}#…` (dynamodb:LeadingKeys, plus a Null check so a request
+ *             without a partition key, such as a Scan, is not let through by ForAllValues)
+ *   S3:       objects under `user/{sub}/` (a policy variable in the resource ARN)
+ * https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/specifying-conditions.html
+ * https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_variables.html
+ *
+ * `$${...}` is Terraform's escape for a literal `${...}`: the policy variable is resolved by IAM
+ * at request time, not by Terraform. The `sub` cannot contain `*` or `?` (not session-tag
+ * characters, and refused by shared/src/store/owner.ts), so StringLike matches only that prefix.
+ *
+ * The pipeline does not use this role: it runs for days after the user's session has ended and
+ * keeps its service role. Recorded in docs/spec/13-decisions.md.
+ */
+resource "aws_iam_role" "user_data" {
+  name               = "${var.name}-api-user-data"
+  description        = "Per-user access to revisions and artifacts, assumed by the API with the caller's sub as a session tag."
+  assume_role_policy = data.aws_iam_policy_document.user_data_trust.json
+  # Role chaining caps the session at one hour whatever this says; set to match.
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "user_data_trust" {
+  # Only the API function's role, and only with exactly one session tag, `sub`.
+  statement {
+    sid     = "ApiWithSubTag"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.api.arn]
+    }
+
+    # Present (StringLike on an absent key is false) and non-empty.
+    condition {
+      test     = "StringLike"
+      variable = "aws:RequestTag/sub"
+      values   = ["?*"]
+    }
+
+    # No other tag keys. ForAllValues is true when the key is absent, which the condition
+    # above already rules out.
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["sub"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "user_data" {
+  name   = "user-data"
+  role   = aws_iam_role.user_data.id
+  policy = data.aws_iam_policy_document.user_data.json
+}
+
+data "aws_iam_policy_document" "user_data" {
+  # The four calls the store makes. No Scan, no BatchGet, no Delete.
+  statement {
+    sid       = "OwnRevisions"
+    effect    = "Allow"
+    actions   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+    resources = [var.table_arn]
+
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["USER#$${aws:PrincipalTag/sub}#*"]
+    }
+
+    condition {
+      test     = "Null"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["false"]
+    }
+  }
+
+  # Presigned uploads and downloads, and confirm's HEAD and ranged read (both s3:GetObject).
+  statement {
+    sid       = "OwnArtifacts"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${var.artifacts_arn}/user/$${aws:PrincipalTag/sub}/*"]
+  }
+
+  # The table and the bucket are encrypted with the data key.
+  statement {
+    sid       = "DataKey"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+    resources = [var.data_key_arn]
   }
 }
 

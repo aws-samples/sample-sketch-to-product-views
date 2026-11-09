@@ -1,6 +1,12 @@
 import { describeError, errorSummary } from '@sketch-to-product-views/shared/errors';
 import { GUARDRAIL_OFF_WARNING, guardrailFromEnv } from '@sketch-to-product-views/shared/guardrail';
-import { HttpError, fail, type ApiEvent, type ApiResult } from './http.js';
+import {
+  isOwnerId,
+  runWithStoreClients,
+  userScope,
+  type StoreClients,
+} from '@sketch-to-product-views/shared/store';
+import { HttpError, caller, fail, type ApiEvent, type ApiResult } from './http.js';
 import { fromCloudFront, originSecrets } from './origin.js';
 import { models } from './routes/models.js';
 import { review, status, submit } from './routes/revisions.js';
@@ -53,7 +59,13 @@ export async function handler(event: ApiEvent): Promise<ApiResult> {
   if (!route) return fail(404, `No route for ${event.routeKey}.`);
 
   try {
-    return await route(event);
+    const roleArn = process.env.USER_DATA_ROLE_ARN;
+    const run = () => Promise.resolve(route(event));
+    // Every route runs as its caller: the store reaches DynamoDB and S3 only through the
+    // user-data role, assumed with the caller's verified `sub` as a session tag. Without the
+    // role configured (local tests) the store falls back to its own clients, unless
+    // STORE_REQUIRES_USER_SCOPE is set, as it is in the deployed function.
+    return await (roleArn ? runWithStoreClients(await scopeFor(event, roleArn), run) : run());
   } catch (error) {
     if (error instanceof HttpError) {
       logLine('warn', {
@@ -79,6 +91,16 @@ export async function handler(event: ApiEvent): Promise<ApiResult> {
     // above; the error text may name a bucket, a table or a model.
     return fail(500, `Internal error. Request id ${requestId ?? 'unknown'}.`);
   }
+}
+
+/**
+ * The caller's store clients. A `sub` that could not be a key prefix or a session tag is a 403,
+ * never a call to STS. The JWT authorizer already checked the token; `caller` reads its claims.
+ */
+async function scopeFor(event: ApiEvent, roleArn: string): Promise<StoreClients> {
+  const { sub } = caller(event);
+  if (!isOwnerId(sub)) throw new HttpError(403, 'Forbidden.');
+  return userScope(sub, { roleArn });
 }
 
 /**

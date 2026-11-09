@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
-  DynamoDBDocumentClient,
+  type DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { assertOwnerId } from './owner.js';
+import { documentClient, scopedClients } from './scope.js';
 import {
   STAGE_IDS,
   type PipelineState,
@@ -45,10 +46,11 @@ const TABLE = () => {
 
 let doc: DynamoDBDocumentClient | undefined;
 
+/** The current user scope's client (the API), else the function's own (the pipeline). */
 function client(): DynamoDBDocumentClient {
-  doc ??= DynamoDBDocumentClient.from(new DynamoDBClient({}), {
-    marshallOptions: { removeUndefinedValues: true },
-  });
+  const scoped = scopedClients();
+  if (scoped) return scoped.dynamodb;
+  doc ??= documentClient(new DynamoDBClient({}));
   return doc;
 }
 
@@ -312,10 +314,18 @@ export async function getReviewCallbackId(ref: RevisionRef): Promise<string | un
   return result.Item?.reviewCallbackId as string | undefined;
 }
 
-/** Weak ETag over the state, so the SPA can poll with `If-None-Match`. */
-export function etagFor(state: PipelineState): string {
+/**
+ * How often an unchanged run still gets a full response. The response carries presigned URLs,
+ * and the SPA keeps the ones it has on a 304: changing the ETag every 10 minutes hands it
+ * fresh URLs well before the 45-minute ones it holds expire (see ./scope.ts).
+ */
+export const URL_REFRESH_MS = 10 * 60_000;
+
+/** Weak ETag over the state and the URL refresh window, so the SPA can poll with `If-None-Match`. */
+export function etagFor(state: PipelineState, now: number = Date.now()): string {
+  const window = Math.floor(now / URL_REFRESH_MS);
   const hash = createHash('sha1')
-    .update(`${state.updatedAt}:${state.events.length}:${state.status}`)
+    .update(`${state.updatedAt}:${state.events.length}:${state.status}:${window}`)
     .digest('hex');
   return `W/"${hash}"`;
 }

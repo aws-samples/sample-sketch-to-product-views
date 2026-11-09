@@ -1,6 +1,7 @@
 import { INPUT_IMAGE_MAX_BYTES } from '../image/limits.js';
 import { randomUUID } from 'node:crypto';
 import { assertOwnerId } from './owner.js';
+import { LONGEST_URL_SECONDS, scopedClients } from './scope.js';
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
@@ -39,8 +40,11 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /** 15 minutes: long enough for a slow upload, short enough that a leaked URL is stale. */
 const PUT_TTL_SECONDS = 900;
-/** 1 hour, so a reviewer can leave the tab open without every image 403-ing. */
-const GET_TTL_SECONDS = 3600;
+/**
+ * 45 minutes: inside the one-hour session the API signs with, with room for the credential
+ * reuse window (./scope.ts). An open tab still gets fresh URLs every 10 minutes (`etagFor`).
+ */
+const GET_TTL_SECONDS = LONGEST_URL_SECONDS;
 
 export const ALLOWED_UPLOAD_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 /** The validate stage's limit, so an oversized file is refused before it is uploaded. */
@@ -57,7 +61,10 @@ export const artifactsBucket = (): string => BUCKET();
 
 let s3: S3Client | undefined;
 
+/** The current user scope's client (the API), else the function's own (the pipeline). */
 function client(): S3Client {
+  const scoped = scopedClients();
+  if (scoped) return scoped.s3;
   s3 ??= new S3Client({});
   return s3;
 }
@@ -154,7 +161,7 @@ export function deliveryKey(
  * The upload leg. `ContentType` is signed in, so the browser must send exactly the type
  * it declared — a client cannot presign a PNG and then upload something else.
  */
-export function presignUpload(key: string, contentType: string): Promise<string> {
+export async function presignUpload(key: string, contentType: string): Promise<string> {
   return getSignedUrl(
     client(),
     new PutObjectCommand({ Bucket: BUCKET(), Key: key, ContentType: contentType }),
@@ -162,9 +169,10 @@ export function presignUpload(key: string, contentType: string): Promise<string>
   );
 }
 
-export function presignDownload(key: string, expiresIn = GET_TTL_SECONDS): Promise<string> {
+/** Capped at `GET_TTL_SECONDS`, so no URL outlives the session that signs it. */
+export async function presignDownload(key: string, expiresIn = GET_TTL_SECONDS): Promise<string> {
   return getSignedUrl(client(), new GetObjectCommand({ Bucket: BUCKET(), Key: key }), {
-    expiresIn,
+    expiresIn: Math.min(expiresIn, GET_TTL_SECONDS),
   });
 }
 
@@ -274,6 +282,8 @@ let presigner: S3Client | undefined;
  * the presigned URL, and S3 then rejects every real upload with a checksum mismatch.
  */
 function presignClient(): S3Client {
+  const scoped = scopedClients();
+  if (scoped) return scoped.presigner;
   presigner ??= new S3Client({ requestChecksumCalculation: 'WHEN_REQUIRED' });
   return presigner;
 }
@@ -284,7 +294,7 @@ function presignClient(): S3Client {
  * refuses the signature. Without `signableHeaders` the presigner leaves `content-type` out
  * of the signature and the type is not enforced.
  */
-export function presignUploadIn(
+export async function presignUploadIn(
   bucket: string,
   key: string,
   opts: { contentType: string; contentLength: number; expiresIn: number },
