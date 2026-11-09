@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sketch to product views on AWS</title>
+  <meta name="description" content="Turn a product design sketch into four photoreal studio views, checked by an AI critic and approved by a human, on AWS.">
+  <style>
+    :root { color-scheme: dark; --bg: #16191f; --text: #e8eaed; --dim: #9aa0a6; --accent: #ff9900; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+    h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin: 0 0 0.5rem; }
+    p.lead { color: var(--dim); max-width: 60ch; margin: 0 0 2rem; }
+    video { width: 100%; border-radius: 10px; background: #000; display: block; }
+    ol { padding-left: 1.2rem; color: var(--dim); }
+    ol li::marker { color: var(--accent); }
+    .links { margin-top: 2rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+    .links a { color: var(--bg); background: var(--accent); padding: 0.55rem 1rem; border-radius: 6px;
+      text-decoration: none; font-weight: 600; }
+    .links a.ghost { background: transparent; color: var(--text); border: 1px solid #3c4043; }
+    footer { margin-top: 3rem; color: var(--dim); font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sketch to product views on AWS</h1>
+    <p class="lead">Turn a product design sketch into four photoreal studio views (front, back and
+      both sides), with an AI critic that checks each view and retries the ones that fail, and a
+      human approval step before delivery.</p>
+    <img src="media/overview.png" alt="Overview: the web and API layer, the durable pipeline with its image provider and Amazon Bedrock, and the approved views." style="width:100%;border-radius:10px;background:#fff;display:block;margin-bottom:1.5rem">
+    <video controls playsinline preload="metadata" poster="media/poster.jpg">
+      <source src="media/demo.mp4" type="video/mp4">
+      Your browser cannot play this video. <a href="media/demo.mp4">Download it</a>.
+    </video>
+    <h2>What happens in the demo</h2>
+    <ol>
+      <li>Upload a sketch and set the run: image model, size, quality, attempts.</li>
+      <li>The analyser reads the image: what the object is, its parts and the views drawn.</li>
+      <li>Four views are generated: the front, then the back, then both sides.</li>
+      <li>The critic compares each view with the sketch and retries the ones that fail.</li>
+      <li>You review and approve, or ask for changes.</li>
+      <li>The approved views are delivered.</li>
+    </ol>
+    <p>At each step the video names the AWS service doing the work, including Amazon Cognito, Amazon
+      CloudFront, AWS WAF, Amazon API Gateway, AWS Lambda durable functions, Amazon Bedrock,
+      Amazon S3 and Amazon DynamoDB.</p>
+    <div class="links">
+      <a href="https://github.com/aws-samples/sample-sketch-to-product-views#deploy-to-aws">Try it out</a>
+      <a class="ghost" href="https://github.com/aws-samples/sample-sketch-to-product-views">View the code</a>
+    </div>
+    <footer>Built with AWS Lambda durable functions, Amazon Bedrock and Terraform.
+      Image generation by OpenAI GPT Image. Waits in the demo are shortened.</footer>
+  </main>
+</body>
+</html>

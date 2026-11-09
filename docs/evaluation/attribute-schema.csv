@@ -1,0 +1,9 @@
+﻿aspect;compared_with;weight;hard_fail;what_the_critic_checks
+object_type;sketch, spec (product type);must;yes;The image shows the object the sketch draws and the product type names.
+shape;sketch;must;no;The overall shape and silhouette are the sketch's.
+proportions;sketch;should;no;The relative size of the main parts is the sketch's, allowing for a schematic drawing.
+parts;sketch;should;no;Each part or detail the sketch draws (handle, strap, lid, button, pocket, seam, logo) is there and as drawn; one answer per part, at most 12.
+color;spec (colour), swatch;must;yes;The dominant colour is the supplied colour and the material sample's. Asked only when one of them is given; the sketch is never a colour reference.
+material;spec (material), swatch;should;no;The material and its finish are the supplied material's and the material sample's. Asked only when one of them is given.
+pattern;sketch, swatch;should;no;Patterns, graphics and text on the surface are the sketch's and the material sample's.
+presentation;output convention;must;yes;A usable studio product image: the product alone, whole and centred, on a seamless plain background, with no person, hands or unrelated props; image quality 0.5 or more.

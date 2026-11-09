@@ -1,0 +1,39 @@
+id: analyser-sonnet-bedrock
+name: Claude Sonnet 5.5 (Bedrock, US)
+category: analyser
+provider: bedrock
+# The US geo profile's Regions, read with `aws bedrock get-inference-profile` on 2026-11-07.
+bedrockModelId: us.anthropic.claude-sonnet-5-5
+region: us-east-1
+residency: [us-east-1, us-east-2, us-west-2]
+lifecycle: active
+isDefault: true
+description: >-
+  The analyser on Claude Sonnet 5.5 through the US geo profile: the same analysis as the other
+  analyser entries (same prompt, same schema, same checks), through Converse. Selected per
+  deployment with `analyser_model` in Terraform.
+tags: [anthropic, bedrock, multimodal, analyser]
+
+requiredInputs: [images]
+acceptsInputs: [images, product_metadata]
+
+# Converse takes structured content blocks rather than a flat body, so there is no provider
+# field mapping to do here.
+apiFieldMap: {}
+
+# Converse rejected `outputConfig` for this profile when measured, so the schema goes in the
+# prompt. The model card now lists structured outputs; re-test before switching this on.
+# https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html
+structuredOutput: false
+
+params:
+  - key: max_tokens
+    type: number
+    label: Max tokens
+    default: 4096
+    advanced: true
+
+notes: >-
+  No structured output: the JSON Schema is stated in the system prompt and the answer is
+  parsed, a malformed one retried by the durable step. IAM needs the inference-profile ARN and
+  the foundation-model ARN in every Region of the profile, as for the critic.

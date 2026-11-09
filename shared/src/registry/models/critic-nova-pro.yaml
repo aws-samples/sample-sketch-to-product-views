@@ -1,0 +1,48 @@
+id: critic-nova-pro
+name: Amazon Nova Pro (US)
+category: critic
+bedrockModelId: us.amazon.nova-pro-v1:0
+region: us-east-1
+# The US geo profile's Regions, read with `aws bedrock get-inference-profile` on 2026-11-07.
+residency: [us-east-1, us-east-2, us-west-2]
+lifecycle: active
+isDefault: false
+# Nova Pro has no Converse structured output; the schema goes in the prompt.
+structuredOutput: false
+description: >-
+  A second model family for the ground-truth extraction, so the reference attributes do
+  not come from the same family as the critic they are used to measure. It is not the
+  pipeline's critic; Sonnet stays the default there.
+tags: [amazon, multimodal, critic, evaluation]
+
+requiredInputs: [sketch, candidate, spec]
+acceptsInputs: [sketch, candidate, spec, swatch]
+
+# Converse takes structured content blocks rather than a flat body, so there is no
+# provider field mapping to do here.
+apiFieldMap: {}
+
+params:
+  - key: max_tokens
+    type: number
+    label: Max tokens
+    # The comparison lists up to twelve parts with reasons; it needs at least 3072.
+    default: 4096
+    min: 256
+    max: 4096
+    advanced: true
+  - key: temperature
+    type: number
+    label: Temperature
+    default: 0
+    min: 0
+    max: 1
+    step: 0.1
+    advanced: true
+    description: >-
+      Zero by default. An extraction that names a different colour on two runs of the
+      same photo cannot serve as a reference.
+
+# Two images and a spec come to roughly 3k input tokens and a few hundred output tokens,
+# at about a quarter of Sonnet's per-token price.
+costPerCall: 0.003
