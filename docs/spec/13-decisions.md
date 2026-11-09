@@ -247,6 +247,33 @@ checks do not see SRP sign-ins; MFA stays optional (see
 sample leaves to the deployer). The Plus plan costs more per monthly active user
 ([pricing](https://aws.amazon.com/cognito/pricing/)).
 
+**D-32. The API reaches user data only through a per-user, session-tagged role.** Every revision
+key starts with its owner's Cognito `sub` (`USER#{sub}#REV#{id}`) and every artifact key with
+`user/{sub}/`. The API function's own role has no DynamoDB or S3 access; for each request it
+assumes `…-api-user-data` with the caller's verified `sub` as the only session tag, and that
+role allows DynamoDB only where `dynamodb:LeadingKeys` matches `USER#${aws:PrincipalTag/sub}#*`
+and S3 only under `user/${aws:PrincipalTag/sub}/*`. Presigned URLs are signed with those
+credentials. *Why:* per-user isolation was enforced only by an ownership check in code, so one
+missing check on a new route would have exposed every user's data; now IAM denies a cross-user
+read or write even when the code builds the wrong key (security review). This is the
+token-vending-machine pattern from AWS SaaS guidance, server-side: the browser never holds AWS
+credentials ([session tags](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_session-tags.html),
+[DynamoDB fine-grained access control](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/specifying-conditions.html)).
+The ownership predicates still run, as a second check. Credentials are cached per user for at
+most 10 minutes and only while they outlive the longest presigned URL (45 minutes): a URL dies
+with the credentials that signed it, and a role assumed by a role lasts at most one hour
+([S3 presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html),
+[role chaining](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-console.html)).
+The status ETag changes every 10 minutes so an idle tab is handed fresh URLs. *Rejected:* a
+Cognito identity pool giving the browser AWS credentials (adds credentials to the browser for no
+gain); an in-code check only (no backstop). *Breaking:* revisions written before the owner
+prefix (and the earlier ownerless ones) are no longer reachable through the API.
+*Residual risk:* **the pipeline keeps its service role** with access to the whole table and
+bucket: it runs for days after the user's session has ended, and no AWS reference pattern covers
+per-user credentials for such a workflow, so it was not built. The pipeline builds every key from
+the owner in its payload and refuses an input outside that owner's prefix, but that is a check in
+code, not IAM.
+
 ## Open questions
 
 | # | Question | Notes |

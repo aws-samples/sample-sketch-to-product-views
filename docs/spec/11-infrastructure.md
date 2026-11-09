@@ -35,7 +35,7 @@ Reference implementation: Terraform in `infra/` (modules `security`, `guardrail`
 | Pipeline DLQ | SQS, SSE-KMS (data key), 14-day retention; `dead_letter_config` on the pipeline function; role `sqs:SendMessage` on it | durable functions support a DLQ but not destinations, and a failed async execution is not retried ([retries](https://docs.aws.amazon.com/lambda/latest/dg/durable-execution-sdk-retries.html#durable-invocation-retries)); the handler records stage failures itself, so the queue gets unhandled errors, timeouts and stopped executions |
 | Pipeline package | handler bundle plus the image library's linux-arm64 native binary in the same zip; plan fails if the binary is missing | upload validation and the critic's image preparation decode images natively |
 | API function | `nodejs24.x`, arm64, 512 MB, timeout 30 s, X-Ray, JSON logs, explicit log group, SQS DLQ (KMS, 14-day retention) | thin; a failed async event is kept for redrive |
-| HTTP API | 7 enumerated routes, all with the JWT authorizer (issuer = user pool, audience = app client); Lambda proxy integration, payload format 2.0, 30 s; the function refuses requests without the CloudFront origin secret (two `random_password` slots in its environment); CORS origins = `allowed_web_origins` only (cross-origin callers such as the local dev SPA; the site is same-origin), methods `GET POST OPTIONS`, headers `authorization content-type if-none-match`, expose `etag`, no credentials, max-age 300; default stage throttling burst 20, rate 10; JSON access logs (request id, IP, route, status, length, integration error, time) | |
+| HTTP API | 6 enumerated routes, all with the JWT authorizer (issuer = user pool, audience = app client); Lambda proxy integration, payload format 2.0, 30 s; the function refuses requests without the CloudFront origin secret (two `random_password` slots in its environment); CORS origins = `allowed_web_origins` only (cross-origin callers such as the local dev SPA; the site is same-origin), methods `GET POST OPTIONS`, headers `authorization content-type if-none-match`, expose `etag`, no credentials, max-age 300; default stage throttling burst 20, rate 10; JSON access logs (request id, IP, route, status, length, integration error, time) | |
 | Web hosting | private S3 bucket behind CloudFront with Origin Access Control; second origin = the HTTP API (`https-only`, TLS 1.2, 30 s read timeout, `x-origin-verify` custom header) on behaviour `/api/*`: all methods, `Managed-CachingDisabled`, origin request policy forwarding `authorization`, `content-type`, `if-none-match`, `origin`, the CORS preflight headers and all query strings, no cookies, no `Host`; no custom error responses (they would rewrite the API's 403/404); bucket policy limited to that distribution, viewer TLS 1.2 minimum only with a custom domain and an ACM certificate (`web_domain_name`, `web_acm_certificate_arn`; the default `*.cloudfront.net` certificate always uses the TLSv1 policy), HTTP/2 and 3, access logs | SPA and the only public path of the API |
 | Response headers | CSP `default-src 'self'`, `img-src` and `connect-src` include the artifacts bucket origin, `connect-src` `'self'` (the API) and the Cognito domains; HSTS 1 year; `X-Frame-Options DENY`; nosniff; strict-origin-when-cross-origin | |
 | Bedrock guardrail (when `guardrail_enabled`) | `aws_bedrock_guardrail`: content filters `HATE`, `INSULTS`, `SEXUAL`, `VIOLENCE`, `MISCONDUCT` at `MEDIUM` on input and output, `PROMPT_ATTACK` at `MEDIUM` on input with output strength `NONE`; text modality, action `BLOCK`; Classic tier; blocked-input and blocked-output messages; `kms_key_arn` = data key. `aws_bedrock_guardrail_version` (kept on destroy, replaced when the guardrail changes) | screens every free-text input ([03](03-orchestration.md#guardrail-screening)); a pinned version so an edit reaches running functions only through a new version |
@@ -71,12 +71,26 @@ Pipeline role:
 | Provider key | read of the secret value | only the configured OpenAI and/or gateway key secret; no statement when unset |
 | Guardrail | `bedrock:ApplyGuardrail` | the guardrail ARN; no statement when disabled. Needed for Converse with `guardrailConfig` as well as for `ApplyGuardrail` ([guardrail permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-permissions.html)); the guardrail's data-key `kms:Decrypt` is the Data key statement |
 
-API role: own logs; the same table actions; `s3:GetObject`/`PutObject` on `bucket/*` (presigning
-signs with the role); data key; `lambda:InvokeFunction` on the **alias ARN only**;
+API role: own logs; **no DynamoDB or S3 access**; `sts:AssumeRole` and `sts:TagSession` on the
+user-data role only; data key (environment variables, DLQ); `lambda:InvokeFunction` on the **alias ARN only**;
 `lambda:SendDurableExecutionCallbackSuccess`, `…Failure`, `…Heartbeat` on the unqualified
 function ARN and `:*` (a parked execution may run on an older version than `live`);
 `sqs:SendMessage` on its DLQ; X-Ray; `bedrock:ApplyGuardrail` on the guardrail ARN when enabled (it
 screens review notes).
+
+User-data role (`…-api-user-data`), assumed by the API per request with the caller's `sub` as the
+only session tag ([D-32](13-decisions.md)):
+
+| Statement | Actions | Resources and conditions |
+|---|---|---|
+| Trust | `sts:AssumeRole`, `sts:TagSession` | principal: the API role only; `aws:RequestTag/sub` present and non-empty; `aws:TagKeys` only `sub` |
+| OwnRevisions | `dynamodb:GetItem`, `Query`, `PutItem`, `UpdateItem` | the table, where every `dynamodb:LeadingKeys` matches `USER#${aws:PrincipalTag/sub}#*`, and `dynamodb:LeadingKeys` is present (no Scan) |
+| OwnArtifacts | `s3:GetObject`, `s3:PutObject` | `bucket/user/${aws:PrincipalTag/sub}/*` |
+| Data key | `kms:Decrypt`, `GenerateDataKey`, `DescribeKey` | data key |
+
+`max_session_duration` is one hour, the cap for a role assumed by a role. The function runs with
+`STORE_REQUIRES_USER_SCOPE=true`: a store call outside a user scope throws rather than use the
+function's own credentials.
 
 The guardrail is encrypted with the data key, whose key policy delegates to IAM through the
 account statement: the identity that creates the guardrail needs `kms:Decrypt`,

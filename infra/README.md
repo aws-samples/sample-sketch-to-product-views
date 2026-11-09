@@ -138,6 +138,51 @@ outside a VPC and reach `api.openai.com` over the default internet egress.
 
 Create users with `aws cognito-idp admin-create-user`; self sign-up is off.
 
+## Per-user data access
+
+The API never reads DynamoDB or S3 with its own role. For each request it assumes
+`<name>-api-user-data` with the caller's Cognito `sub` as a session tag, and that role only allows
+keys under that user (`USER#{sub}#…` in the table, `user/{sub}/…` in the bucket). See
+[D-32](../docs/spec/13-decisions.md) and `shared/src/store/scope.ts`. The pipeline keeps its own
+service role (D-32, residual risk).
+
+**Check it after `terraform apply`.** Both checks only read: the simulator evaluates the policy
+without making a request, and CloudTrail shows what happened.
+
+1. The policy, for two users (replace `A` and `B` with two `sub` values, or any two strings):
+
+   ```bash
+   ROLE=$(terraform output -raw api_user_data_role_arn)
+   TABLE=$(terraform output -raw table_arn)
+   BUCKET=$(terraform output -raw artifacts_bucket_arn)
+
+   sim() { # $1 = tag value, $2 = action, $3 = resource, then extra context entries
+     aws iam simulate-principal-policy --policy-source-arn "$ROLE" \
+       --action-names "$2" --resource-arns "$3" \
+       --context-entries "ContextKeyName=aws:PrincipalTag/sub,ContextKeyValues=$1,ContextKeyType=string" "${@:4}" \
+       --query 'EvaluationResults[0].EvalDecision' --output text
+   }
+   leading() { echo "ContextKeyName=dynamodb:LeadingKeys,ContextKeyValues=$1,ContextKeyType=stringList"; }
+
+   sim A dynamodb:GetItem "$TABLE" "$(leading 'USER#A#REV#r1')"  # expect: allowed
+   sim A dynamodb:GetItem "$TABLE" "$(leading 'USER#B#REV#r1')"  # expect: implicitDeny
+   sim A dynamodb:Scan    "$TABLE"                               # expect: implicitDeny
+   sim A s3:GetObject "$BUCKET/user/A/product/p/x.png"           # expect: allowed
+   sim A s3:GetObject "$BUCKET/user/B/product/p/x.png"           # expect: implicitDeny
+   ```
+
+   The two `allowed` lines are the control: if they also come back `implicitDeny`, the simulator
+   did not substitute the `${aws:PrincipalTag/sub}` variable and the result says nothing; use
+   check 2.
+
+2. A real run with two users: sign in as each, submit a run as user A, and open user A's
+   `#/r/{id}` as user B (404). In CloudTrail, each request's `AssumeRole` on `<name>-api-user-data`
+   carries `principalTags.sub` for the signed-in user, and the DynamoDB and S3 calls that follow
+   are made by that session.
+
+**Breaking change.** Revisions created before the owner prefix keep their old keys and are no
+longer reachable through the API; their objects stay in the bucket.
+
 ## Cognito
 
 `cognito_threat_protection` (default `ENFORCED`) sets the user pool's threat protection
